@@ -72,3 +72,27 @@ function findKey(sample: Record<string, any> | undefined, candidates: string[]):
   }
   return null
 }
+
+/**
+ * Same as tagTotalRows, but groups by a season column first so a multi-year
+ * file (one CSV covering several seasons) doesn't accidentally treat two
+ * different players' same name in different years as one "split season."
+ * Mutates and returns the same row objects, so this is safe to call even
+ * when rows span multiple player-type files.
+ */
+export function tagTotalRowsBySeason(
+  rows: Record<string, any>[],
+  candidateStatKeys: string[],
+  seasonKey: string,
+): Record<string, any>[] {
+  const bySeason = new Map<string, Record<string, any>[]>()
+  for (const row of rows) {
+    const season = String(row[seasonKey] ?? '')
+    if (!bySeason.has(season)) bySeason.set(season, [])
+    bySeason.get(season)!.push(row)
+  }
+  for (const group of bySeason.values()) {
+    tagTotalRows(group, candidateStatKeys)
+  }
+  return rows
+}
