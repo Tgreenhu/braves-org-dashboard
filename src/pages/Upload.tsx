@@ -10,12 +10,19 @@ import {
 } from 'lucide-react'
 import { supabase, supabaseConfigured } from '@/lib/supabaseClient'
 import { cacheClear } from '@/lib/cache'
+import { tagTotalRows } from '@/lib/detectTotals'
 
 interface UploadSource {
   id: string
   label: string
   fangraphsUrl: string
   supabaseTable: string
+  /** True for reports where a player can appear more than once (played at
+   * multiple levels this season) — triggers total-row detection before upsert. */
+  detectTotals?: boolean
+  /** Candidate CSV column names for the counting stat used to identify the
+   * combined-total row (PA for hitters, IP for pitchers). */
+  totalsStatKeys?: string[]
 }
 
 interface UploadGroup {
@@ -24,6 +31,9 @@ interface UploadGroup {
   description: string
   sources: UploadSource[]
 }
+
+const HITTER_TOTALS_STAT_KEYS = ['PA', 'pa']
+const PITCHER_TOTALS_STAT_KEYS = ['IP', 'ip']
 
 // TODO(data mapping): Fangraphs' exported CSV column headers won't match
 // the Supabase column names 1:1 (e.g. Fangraphs exports "Name", "PA", "wRC+"
@@ -37,21 +47,21 @@ const UPLOAD_GROUPS: UploadGroup[] = [
   {
     id: 'milb-hitters',
     title: 'MiLB Hitters',
-    description: 'Braves system minor league hitting leaderboards',
+    description: 'Braves system minor league hitting leaderboards. Players who moved between levels this season get one row per level plus a combined total row, detected automatically.',
     sources: [
-      { id: 'milb-hit-standard', label: 'Standard', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=bat&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&type=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
-      { id: 'milb-hit-advanced', label: 'Advanced', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=bat&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&type=1&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
-      { id: 'milb-hit-batted', label: 'Batted', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=bat&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&type=2&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
+      { id: 'milb-hit-standard', label: 'Standard', supabaseTable: 'hitter_stats', detectTotals: true, totalsStatKeys: HITTER_TOTALS_STAT_KEYS, fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=bat&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&type=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
+      { id: 'milb-hit-advanced', label: 'Advanced', supabaseTable: 'hitter_stats', detectTotals: true, totalsStatKeys: HITTER_TOTALS_STAT_KEYS, fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=bat&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&type=1&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
+      { id: 'milb-hit-batted', label: 'Batted', supabaseTable: 'hitter_stats', detectTotals: true, totalsStatKeys: HITTER_TOTALS_STAT_KEYS, fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=bat&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&type=2&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
     ],
   },
   {
     id: 'milb-pitchers',
     title: 'MiLB Pitchers',
-    description: 'Braves system minor league pitching leaderboards',
+    description: 'Braves system minor league pitching leaderboards. Players who moved between levels this season get one row per level plus a combined total row, detected automatically.',
     sources: [
-      { id: 'milb-pit-standard', label: 'Standard', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=pit&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
-      { id: 'milb-pit-advanced', label: 'Advanced', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=pit&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=&type=1' },
-      { id: 'milb-pit-batted', label: 'Batted', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=pit&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=&type=2' },
+      { id: 'milb-pit-standard', label: 'Standard', supabaseTable: 'pitcher_stats', detectTotals: true, totalsStatKeys: PITCHER_TOTALS_STAT_KEYS, fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=pit&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
+      { id: 'milb-pit-advanced', label: 'Advanced', supabaseTable: 'pitcher_stats', detectTotals: true, totalsStatKeys: PITCHER_TOTALS_STAT_KEYS, fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=pit&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=&type=1' },
+      { id: 'milb-pit-batted', label: 'Batted', supabaseTable: 'pitcher_stats', detectTotals: true, totalsStatKeys: PITCHER_TOTALS_STAT_KEYS, fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=pit&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=&type=2' },
     ],
   },
   {
@@ -133,12 +143,12 @@ export default function Upload() {
 // sits in the background as a fixed reference point and never gets
 // clobbered by a current-season Fangraphs re-upload above.
 //
-// Large files are parsed in a background worker and streamed in via
-// Papa.parse's `chunk` callback instead of loading the whole CSV into
-// memory as one array, then written to Supabase in batches of 500 rows
-// (Postgres/PostgREST don't handle one giant insert well). The parser is
-// paused between batches so it never gets more than one batch ahead of
-// what's actually been written.
+// Parsed with Papa's `complete` callback (whole file at once, off the main
+// thread via `worker: true`) rather than streamed in chunks, because total-
+// row detection (tagTotalRows) needs to see every row for a player before
+// it can tell which one is their combined season line. Once tagged, rows
+// are written to Supabase in batches of 500 (Postgres/PostgREST don't
+// handle one giant insert well).
 // =====================================================================
 
 const HISTORICAL_BATCH_SIZE = 500
@@ -152,54 +162,35 @@ function HistoricalArchiveSection() {
   const [error, setError] = useState<string | null>(null)
 
   const table = playerType === 'Hitter' ? 'historical_hitter_stats' : 'historical_pitcher_stats'
+  const statKeys = playerType === 'Hitter' ? HITTER_TOTALS_STAT_KEYS : PITCHER_TOTALS_STAT_KEYS
 
   const handleFile = (file: File) => {
     setStatus('parsing')
     setRowsProcessed(0)
     setError(null)
 
-    let buffer: Record<string, any>[] = []
-    let total = 0
-    let failed = false
-
-    const flush = async () => {
-      if (buffer.length === 0) return
-      const rows = buffer.map((row) => ({ ...row, season }))
-      buffer = []
-      if (supabaseConfigured) {
-        const { error: upsertError } = await supabase
-          .from(table)
-          .upsert(rows, { onConflict: 'season,name,team,level' })
-        if (upsertError) throw upsertError
-      }
-    }
-
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       worker: true, // parse off the main thread so a big file doesn't freeze the UI
-      chunk: (results, parser) => {
-        parser.pause() // apply backpressure — don't let parsing outrun our Supabase writes
-        buffer.push(...(results.data as Record<string, any>[]))
-        total += results.data.length
-        setRowsProcessed(total)
-        if (buffer.length >= HISTORICAL_BATCH_SIZE) {
-          flush()
-            .then(() => parser.resume())
-            .catch((e: any) => {
-              failed = true
-              setError(e.message ?? 'Upload failed')
-              setStatus('error')
-              parser.abort()
-            })
-        } else {
-          parser.resume()
-        }
-      },
-      complete: async () => {
-        if (failed) return
+      complete: async (results) => {
         try {
-          await flush() // write whatever's left in the buffer
+          const tagged = tagTotalRows(results.data as Record<string, any>[], statKeys)
+          const rows = tagged.map((row) => ({ ...row, season }))
+
+          if (supabaseConfigured) {
+            for (let i = 0; i < rows.length; i += HISTORICAL_BATCH_SIZE) {
+              const batch = rows.slice(i, i + HISTORICAL_BATCH_SIZE)
+              const { error: upsertError } = await supabase
+                .from(table)
+                .upsert(batch, { onConflict: 'season,name,team,level' })
+              if (upsertError) throw upsertError
+              setRowsProcessed(Math.min(i + HISTORICAL_BATCH_SIZE, rows.length))
+            }
+          } else {
+            setRowsProcessed(rows.length)
+          }
+
           cacheClear()
           setStatus('success')
         } catch (e: any) {
@@ -223,7 +214,9 @@ function HistoricalArchiveSection() {
           <p className="text-[11px] text-navy-900/50 sm:text-xs">
             For a big, multi-year CSV of past-season data. This goes into its own tables that
             nothing else in the app touches — a fixed reference point for comparison that won't
-            change when you refresh the current season above.
+            change when you refresh the current season above. Players who played at multiple
+            levels that year get one row per level plus a combined total row, detected
+            automatically from the file.
           </p>
         </div>
       </div>
@@ -310,7 +303,11 @@ function UploadRow({ source }: { source: UploadSource }) {
       skipEmptyLines: true,
       complete: async (results) => {
         try {
-          setRowCount(results.data.length)
+          let rows = results.data as Record<string, any>[]
+          if (source.detectTotals && source.totalsStatKeys) {
+            rows = tagTotalRows(rows, source.totalsStatKeys)
+          }
+          setRowCount(rows.length)
           if (supabaseConfigured) {
             // TODO: map Fangraphs' column headers to your Supabase schema
             // columns before inserting -- Fangraphs exports don't match 1:1,
@@ -319,7 +316,7 @@ function UploadRow({ source }: { source: UploadSource }) {
             // not a blind overwrite.
             const { error: upsertError } = await supabase
               .from(source.supabaseTable)
-              .upsert(results.data as any[])
+              .upsert(rows, { onConflict: 'name,team,level' })
             if (upsertError) throw upsertError
           }
           cacheClear() // invalidate cached reads so other tabs re-fetch fresh data
