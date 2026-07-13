@@ -7,21 +7,19 @@ import {
   AlertCircle,
   Archive,
   Loader2,
+  FileText,
 } from 'lucide-react'
 import { supabase, supabaseConfigured } from '@/lib/supabaseClient'
 import { cacheClear } from '@/lib/cache'
-import { tagTotalRows } from '@/lib/detectTotals'
+import { tagTotalRows, tagTotalRowsBySeason } from '@/lib/detectTotals'
+import { detectPlayerType, findColumnKey, extractYearFromFilename } from '@/lib/csvUpload'
 
 interface UploadSource {
   id: string
   label: string
   fangraphsUrl: string
   supabaseTable: string
-  /** True for reports where a player can appear more than once (played at
-   * multiple levels this season) — triggers total-row detection before upsert. */
   detectTotals?: boolean
-  /** Candidate CSV column names for the counting stat used to identify the
-   * combined-total row (PA for hitters, IP for pitchers). */
   totalsStatKeys?: string[]
 }
 
@@ -34,15 +32,8 @@ interface UploadGroup {
 
 const HITTER_TOTALS_STAT_KEYS = ['PA', 'pa']
 const PITCHER_TOTALS_STAT_KEYS = ['IP', 'ip']
+const SEASON_COLUMN_CANDIDATES = ['Season', 'season', 'Year', 'year']
 
-// TODO(data mapping): Fangraphs' exported CSV column headers won't match
-// the Supabase column names 1:1 (e.g. Fangraphs exports "Name", "PA", "wRC+"
-// -- schema.sql uses "name", "pa", "wrc_plus"). Each of these reports also
-// only carries a slice of a player's full stat line (Standard vs Advanced
-// vs Statcast, etc.), so uploading several reports for the same player
-// should upsert into the same hitter_stats/pitcher_stats row rather than
-// overwrite it. Build that header-mapping + partial-upsert logic in
-// handleFile() below before wiring this up for real.
 const UPLOAD_GROUPS: UploadGroup[] = [
   {
     id: 'milb-hitters',
@@ -98,7 +89,7 @@ const UPLOAD_GROUPS: UploadGroup[] = [
   },
 ]
 
-type RowStatus = 'idle' | 'parsing' | 'success' | 'error'
+type RowStatus = 'idle' | 'parsing' | 'uploading' | 'success' | 'error'
 
 export default function Upload() {
   return (
@@ -117,7 +108,7 @@ export default function Upload() {
         )}
       </div>
 
-      <HistoricalArchiveSection />
+      <MassUploadSection />
 
       {UPLOAD_GROUPS.map((group) => (
         <div key={group.id} className="space-y-2.5">
@@ -137,72 +128,140 @@ export default function Upload() {
 }
 
 // =====================================================================
-// Historical Archive — for large, multi-year CSVs of past-season data.
-// Lives in its own tables (historical_hitter_stats / historical_pitcher_stats,
-// see supabase/schema.sql) that nothing else in the app writes to, so it
-// sits in the background as a fixed reference point and never gets
-// clobbered by a current-season Fangraphs re-upload above.
+// Mass Upload (Historical Archive) — drop in any number of CSVs at once,
+// nothing to configure first. Each file is inspected on its own:
+//   - Hitter vs Pitcher: guessed from its columns (IP/ERA = pitcher,
+//     PA/AVG/OBP = hitter).
+//   - Season: read from a Season/Year column if the file has one
+//     (typical for a multi-year export); otherwise pulled from a 4-digit
+//     year in the filename (e.g. "2019_hitters.csv").
+// Rows land in historical_hitter_stats / historical_pitcher_stats — tables
+// nothing else in the app writes to, so this data sits in the background
+// as a fixed reference point. Multi-level total-row detection runs
+// per-season so a multi-year file doesn't cross-contaminate across years.
 //
-// Parsed with Papa's `complete` callback (whole file at once, off the main
-// thread via `worker: true`) rather than streamed in chunks, because total-
-// row detection (tagTotalRows) needs to see every row for a player before
-// it can tell which one is their combined season line. Once tagged, rows
-// are written to Supabase in batches of 500 (Postgres/PostgREST don't
-// handle one giant insert well).
+// Parsing runs on the main thread (no Web Worker) -- PapaParse's worker
+// mode looks for its own script at a URL that doesn't exist in a bundled
+// Vite build, which silently hangs instead of erroring. Fine here since
+// we need the whole file in memory anyway for total detection.
 // =====================================================================
 
-const HISTORICAL_BATCH_SIZE = 500
+const BATCH_SIZE = 500
 
-function HistoricalArchiveSection() {
+interface FileUploadState {
+  id: string
+  fileName: string
+  status: RowStatus
+  detectedType: 'Hitter' | 'Pitcher' | null
+  seasons: number[]
+  rowsProcessed: number
+  totalRows: number
+  error?: string
+}
+
+function MassUploadSection() {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [playerType, setPlayerType] = useState<'Hitter' | 'Pitcher'>('Hitter')
-  const [season, setSeason] = useState(new Date().getFullYear() - 1)
-  const [status, setStatus] = useState<RowStatus>('idle')
-  const [rowsProcessed, setRowsProcessed] = useState(0)
-  const [error, setError] = useState<string | null>(null)
+  const [files, setFiles] = useState<FileUploadState[]>([])
 
-  const table = playerType === 'Hitter' ? 'historical_hitter_stats' : 'historical_pitcher_stats'
-  const statKeys = playerType === 'Hitter' ? HITTER_TOTALS_STAT_KEYS : PITCHER_TOTALS_STAT_KEYS
+  const updateFile = (id: string, patch: Partial<FileUploadState>) => {
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)))
+  }
 
-  const handleFile = (file: File) => {
-    setStatus('parsing')
-    setRowsProcessed(0)
-    setError(null)
+  const processFile = (file: File, id: string) =>
+    new Promise<void>((resolve) => {
+      updateFile(id, { status: 'parsing' })
 
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      worker: true, // parse off the main thread so a big file doesn't freeze the UI
-      complete: async (results) => {
-        try {
-          const tagged = tagTotalRows(results.data as Record<string, any>[], statKeys)
-          const rows = tagged.map((row) => ({ ...row, season }))
-
-          if (supabaseConfigured) {
-            for (let i = 0; i < rows.length; i += HISTORICAL_BATCH_SIZE) {
-              const batch = rows.slice(i, i + HISTORICAL_BATCH_SIZE)
-              const { error: upsertError } = await supabase
-                .from(table)
-                .upsert(batch, { onConflict: 'season,name,team,level' })
-              if (upsertError) throw upsertError
-              setRowsProcessed(Math.min(i + HISTORICAL_BATCH_SIZE, rows.length))
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: async (results) => {
+          try {
+            const headers = results.meta.fields ?? []
+            const detectedType = detectPlayerType(headers)
+            if (!detectedType) {
+              updateFile(id, {
+                status: 'error',
+                error: "Couldn't tell hitter vs pitcher from the columns in this file.",
+              })
+              return
             }
-          } else {
-            setRowsProcessed(rows.length)
-          }
 
-          cacheClear()
-          setStatus('success')
-        } catch (e: any) {
-          setError(e.message ?? 'Upload failed')
-          setStatus('error')
-        }
-      },
-      error: (err) => {
-        setError(err.message)
-        setStatus('error')
-      },
+            let rows = results.data as Record<string, any>[]
+            const seasonKey = findColumnKey(headers, SEASON_COLUMN_CANDIDATES)
+
+            if (seasonKey) {
+              rows = rows.map((r) => ({ ...r, season: Number(r[seasonKey]) || null }))
+            } else {
+              const yearFromName = extractYearFromFilename(file.name)
+              if (!yearFromName) {
+                updateFile(id, {
+                  status: 'error',
+                  detectedType,
+                  error: 'No Season/Year column, and no 4-digit year in the filename. Rename it, e.g. "2019_hitters.csv".',
+                })
+                return
+              }
+              rows = rows.map((r) => ({ ...r, season: yearFromName }))
+            }
+
+            rows = rows.filter((r) => r.season != null)
+            const seasons = Array.from(new Set(rows.map((r) => r.season as number))).sort()
+
+            const statKeys = detectedType === 'Hitter' ? HITTER_TOTALS_STAT_KEYS : PITCHER_TOTALS_STAT_KEYS
+            tagTotalRowsBySeason(rows, statKeys, 'season')
+
+            const table = detectedType === 'Hitter' ? 'historical_hitter_stats' : 'historical_pitcher_stats'
+            updateFile(id, { status: 'uploading', detectedType, seasons, totalRows: rows.length })
+
+            if (supabaseConfigured) {
+              for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+                const batch = rows.slice(i, i + BATCH_SIZE)
+                const { error: upsertError } = await supabase
+                  .from(table)
+                  .upsert(batch, { onConflict: 'season,name,team,level' })
+                if (upsertError) throw upsertError
+                updateFile(id, { rowsProcessed: Math.min(i + BATCH_SIZE, rows.length) })
+              }
+            } else {
+              updateFile(id, { rowsProcessed: rows.length })
+            }
+
+            cacheClear()
+            updateFile(id, { status: 'success' })
+          } catch (e: any) {
+            updateFile(id, { status: 'error', error: e.message ?? 'Upload failed' })
+          } finally {
+            resolve()
+          }
+        },
+        error: (err) => {
+          updateFile(id, { status: 'error', error: err.message })
+          resolve()
+        },
+      })
     })
+
+  const handleFiles = async (fileList: FileList) => {
+    const incoming = Array.from(fileList).map((file) => ({
+      id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file,
+    }))
+    setFiles((prev) => [
+      ...prev,
+      ...incoming.map(({ id, file }) => ({
+        id,
+        fileName: file.name,
+        status: 'parsing' as RowStatus,
+        detectedType: null,
+        seasons: [] as number[],
+        rowsProcessed: 0,
+        totalRows: 0,
+      })),
+    ])
+    // Process one at a time so batches don't all hit Supabase simultaneously.
+    for (const { id, file } of incoming) {
+      await processFile(file, id)
+    }
   }
 
   return (
@@ -210,81 +269,78 @@ function HistoricalArchiveSection() {
       <div className="mb-3 flex items-start gap-2.5">
         <Archive size={18} className="mt-0.5 shrink-0 text-navy-600" />
         <div>
-          <h3 className="text-sm font-semibold text-navy-950 sm:text-base">Historical Archive</h3>
+          <h3 className="text-sm font-semibold text-navy-950 sm:text-base">
+            Historical Archive — Mass Upload
+          </h3>
           <p className="text-[11px] text-navy-900/50 sm:text-xs">
-            For a big, multi-year CSV of past-season data. This goes into its own tables that
-            nothing else in the app touches — a fixed reference point for comparison that won't
-            change when you refresh the current season above. Players who played at multiple
-            levels that year get one row per level plus a combined total row, detected
-            automatically from the file.
+            Drop in as many CSVs as you want at once. Hitter/pitcher and season are detected
+            automatically per file — nothing to select first. Goes into its own tables that
+            nothing else in the app touches, so it's a fixed reference point that won't change
+            when you refresh the current season below.
           </p>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="flex overflow-hidden rounded-full border border-navy-950/10">
-          <button
-            onClick={() => setPlayerType('Hitter')}
-            className={`px-3.5 py-1.5 text-xs font-semibold transition ${
-              playerType === 'Hitter' ? 'bg-navy text-white' : 'bg-white text-navy-800'
-            }`}
-          >
-            Hitters
-          </button>
-          <button
-            onClick={() => setPlayerType('Pitcher')}
-            className={`px-3.5 py-1.5 text-xs font-semibold transition ${
-              playerType === 'Pitcher' ? 'bg-navy text-white' : 'bg-white text-navy-800'
-            }`}
-          >
-            Pitchers
-          </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".csv"
+        multiple
+        className="hidden"
+        onChange={(e) => e.target.files && e.target.files.length > 0 && handleFiles(e.target.files)}
+      />
+      <button
+        onClick={() => inputRef.current?.click()}
+        className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-navy-950/15 py-3 text-xs font-medium text-navy-900/60 hover:border-navy-600 hover:text-navy-900"
+      >
+        <UploadCloud size={16} /> Select CSVs (any number at once)
+      </button>
+
+      {files.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {files.map((f) => (
+            <FileRow key={f.id} file={f} />
+          ))}
         </div>
-
-        <label className="flex items-center gap-1.5 text-xs text-navy-900/70">
-          Season
-          <input
-            type="number"
-            value={season}
-            onChange={(e) => setSeason(Number(e.target.value))}
-            className="w-20 rounded-md border border-navy-950/10 px-2 py-1.5 text-xs"
-          />
-        </label>
-
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".csv"
-          className="hidden"
-          onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-        />
-        <button
-          onClick={() => inputRef.current?.click()}
-          disabled={status === 'parsing'}
-          className="flex items-center gap-2 rounded-lg border-2 border-dashed border-navy-950/15 px-4 py-1.5 text-xs font-medium text-navy-900/60 hover:border-navy-600 hover:text-navy-900 disabled:opacity-50"
-        >
-          {status === 'parsing' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />}
-          Upload {season} {playerType === 'Hitter' ? 'hitters' : 'pitchers'} CSV
-        </button>
-      </div>
-
-      {status === 'parsing' && (
-        <p className="mt-2 text-[11px] text-navy-900/50">
-          Processing... {rowsProcessed.toLocaleString()} rows written so far. Large files can take a
-          few minutes — feel free to leave this tab open in the background.
-        </p>
       )}
-      {status === 'success' && (
-        <p className="mt-2 flex items-center gap-1 text-[11px] text-emerald-600">
-          <CheckCircle2 size={12} /> Archived {rowsProcessed.toLocaleString()} rows for {season}
-          {!supabaseConfigured && ' (local preview only — connect Supabase to actually save this)'}
-        </p>
+    </div>
+  )
+}
+
+function FileRow({ file }: { file: FileUploadState }) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-lg border border-navy-950/8 bg-white px-3 py-2 text-xs">
+      <FileText size={14} className="shrink-0 text-navy-900/40" />
+      <span className="min-w-0 flex-1 truncate font-medium text-navy-950">{file.fileName}</span>
+
+      {file.detectedType && (
+        <span className="shrink-0 rounded-full bg-navy-950/5 px-2 py-0.5 text-[10px] font-medium text-navy-900/60">
+          {file.detectedType}
+          {file.seasons.length > 0 &&
+            ` · ${file.seasons.length === 1 ? file.seasons[0] : `${file.seasons[0]}–${file.seasons[file.seasons.length - 1]}`}`}
+        </span>
       )}
-      {status === 'error' && (
-        <p className="mt-2 flex items-center gap-1 text-[11px] text-brave-red">
-          <AlertCircle size={12} /> {error}
-        </p>
-      )}
+
+      <span className="shrink-0">
+        {(file.status === 'parsing' || file.status === 'uploading') && (
+          <span className="flex items-center gap-1 text-navy-900/50">
+            <Loader2 size={12} className="animate-spin" />
+            {file.status === 'uploading' && file.totalRows > 0
+              ? `${file.rowsProcessed.toLocaleString()}/${file.totalRows.toLocaleString()}`
+              : 'Reading...'}
+          </span>
+        )}
+        {file.status === 'success' && (
+          <span className="flex items-center gap-1 text-emerald-600">
+            <CheckCircle2 size={12} /> {file.rowsProcessed.toLocaleString()} rows
+          </span>
+        )}
+        {file.status === 'error' && (
+          <span className="flex items-center gap-1 text-brave-red" title={file.error}>
+            <AlertCircle size={12} /> {file.error}
+          </span>
+        )}
+      </span>
     </div>
   )
 }
