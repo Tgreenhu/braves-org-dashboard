@@ -7,39 +7,89 @@ import { cacheClear } from '@/lib/cache'
 interface UploadSource {
   id: string
   label: string
-  description: string
-  // TODO: paste the exact Fangraphs leaderboard URL for each of these once
-  // you've built them (splits, minimums, and columns configured the way you
-  // want). Left blank for now so the shell doesn't link anywhere wrong.
-  fangraphsUrl: string | null
+  fangraphsUrl: string
   supabaseTable: string
 }
 
-const UPLOAD_SOURCES: UploadSource[] = [
-  { id: 'mlb-hitting', label: 'MLB Hitting', description: 'Team + player hitting leaderboard', fangraphsUrl: null, supabaseTable: 'hitter_stats' },
-  { id: 'mlb-pitching', label: 'MLB Pitching', description: 'Team + player pitching leaderboard', fangraphsUrl: null, supabaseTable: 'pitcher_stats' },
-  { id: 'aaa-hitting', label: 'AAA Hitting', description: 'Gwinnett Stripers hitting', fangraphsUrl: null, supabaseTable: 'hitter_stats' },
-  { id: 'aaa-pitching', label: 'AAA Pitching', description: 'Gwinnett Stripers pitching', fangraphsUrl: null, supabaseTable: 'pitcher_stats' },
-  { id: 'aa-hitting', label: 'AA Hitting', description: 'Columbus Clingstones hitting', fangraphsUrl: null, supabaseTable: 'hitter_stats' },
-  { id: 'aa-pitching', label: 'AA Pitching', description: 'Columbus Clingstones pitching', fangraphsUrl: null, supabaseTable: 'pitcher_stats' },
-  { id: 'higha-hitting', label: 'High-A Hitting', description: 'Rome Emperors hitting', fangraphsUrl: null, supabaseTable: 'hitter_stats' },
-  { id: 'higha-pitching', label: 'High-A Pitching', description: 'Rome Emperors pitching', fangraphsUrl: null, supabaseTable: 'pitcher_stats' },
-  { id: 'a-hitting', label: 'A Hitting', description: 'Augusta GreenJackets hitting', fangraphsUrl: null, supabaseTable: 'hitter_stats' },
-  { id: 'a-pitching', label: 'A Pitching', description: 'Augusta GreenJackets pitching', fangraphsUrl: null, supabaseTable: 'pitcher_stats' },
-  { id: 'complex-hitting', label: 'FCL / DSL Hitting', description: 'Complex-level hitting', fangraphsUrl: null, supabaseTable: 'hitter_stats' },
-  { id: 'complex-pitching', label: 'FCL / DSL Pitching', description: 'Complex-level pitching', fangraphsUrl: null, supabaseTable: 'pitcher_stats' },
-  { id: 'team-records', label: 'Team Records / Standings', description: 'W-L, splits, streaks per level', fangraphsUrl: null, supabaseTable: 'team_level_records' },
+interface UploadGroup {
+  id: string
+  title: string
+  description: string
+  sources: UploadSource[]
+}
+
+// TODO(data mapping): Fangraphs' exported CSV column headers won't match
+// the Supabase column names 1:1 (e.g. Fangraphs exports "Name", "PA", "wRC+"
+// -- schema.sql uses "name", "pa", "wrc_plus"). Each of these reports also
+// only carries a slice of a player's full stat line (Standard vs Advanced
+// vs Statcast, etc.), so uploading several reports for the same player
+// should upsert into the same hitter_stats/pitcher_stats row rather than
+// overwrite it. Build that header-mapping + partial-upsert logic in
+// handleFile() below before wiring this up for real.
+const UPLOAD_GROUPS: UploadGroup[] = [
+  {
+    id: 'milb-hitters',
+    title: 'MiLB Hitters',
+    description: 'Braves system minor league hitting leaderboards',
+    sources: [
+      { id: 'milb-hit-standard', label: 'Standard', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=bat&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&type=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
+      { id: 'milb-hit-advanced', label: 'Advanced', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=bat&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&type=1&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
+      { id: 'milb-hit-batted', label: 'Batted', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=bat&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&type=2&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
+    ],
+  },
+  {
+    id: 'milb-pitchers',
+    title: 'MiLB Pitchers',
+    description: 'Braves system minor league pitching leaderboards',
+    sources: [
+      { id: 'milb-pit-standard', label: 'Standard', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=pit&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=' },
+      { id: 'milb-pit-advanced', label: 'Advanced', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=pit&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=&type=1' },
+      { id: 'milb-pit-batted', label: 'Batted', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/minor-league?pos=all&stats=pit&lg=2%2C4%2C5%2C6%2C7%2C8%2C9%2C10%2C11%2C14%2C12%2C13%2C15%2C16%2C17%2C18%2C30%2C32&qual=0&season=2026&level=0&team=&seasonEnd=2026&org=16&ind=0&splitTeam=false&startdate=&enddate=&type=2' },
+    ],
+  },
+  {
+    id: 'mlb-hitters',
+    title: 'MLB Hitters',
+    description: 'Atlanta Braves major league hitting leaderboards',
+    sources: [
+      { id: 'mlb-hit-standard', label: 'Standard', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=0&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
+      { id: 'mlb-hit-batted', label: 'Batted Ball', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=2&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
+      { id: 'mlb-hit-advanced', label: 'Advanced', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=1&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
+      { id: 'mlb-hit-statcast', label: 'Statcast', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=24&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
+      { id: 'mlb-hit-battrack', label: 'Bat Tracking', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=80&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
+    ],
+  },
+  {
+    id: 'mlb-pitchers',
+    title: 'MLB Pitchers',
+    description: 'Atlanta Braves major league pitching leaderboards',
+    sources: [
+      { id: 'mlb-pit-standard', label: 'Standard', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=0&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-advanced', label: 'Advanced', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=1&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-batted', label: 'Batted Ball', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=2&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-statcast', label: 'Statcast', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=24&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-battrack', label: 'Bat Tracking', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=80&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-pitchpct', label: 'Pitch %', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=9&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-velo', label: 'Pitch Velo', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=10&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-hmove', label: 'H Movement', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=11&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-vmove', label: 'V Movement', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=12&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-spin', label: 'Spin', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=82&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-stuffplus', label: 'Stuff+', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=36&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-locationplus', label: 'Location+', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=37&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-pitchingplus', label: 'Pitching+', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=38&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+    ],
+  },
 ]
 
 type RowStatus = 'idle' | 'parsing' | 'success' | 'error'
 
 export default function Upload() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-navy-900 sm:text-xl">Upload Center</h2>
         <p className="text-xs text-navy-900/50 sm:text-sm">
-          Open the Fangraphs export, download the CSV, then drop it here — it's parsed and pushed
+          Open the Fangraphs export, download the CSV, then drop it here -- it's parsed and pushed
           straight into Supabase so every other tab updates.
         </p>
         {!supabaseConfigured && (
@@ -50,11 +100,19 @@ export default function Upload() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {UPLOAD_SOURCES.map((source) => (
-          <UploadRow key={source.id} source={source} />
-        ))}
-      </div>
+      {UPLOAD_GROUPS.map((group) => (
+        <div key={group.id} className="space-y-2.5">
+          <div>
+            <h3 className="text-sm font-semibold text-navy-900 sm:text-base">{group.title}</h3>
+            <p className="text-[11px] text-navy-900/45">{group.description}</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {group.sources.map((source) => (
+              <UploadRow key={source.id} source={source} />
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -76,7 +134,10 @@ function UploadRow({ source }: { source: UploadSource }) {
           setRowCount(results.data.length)
           if (supabaseConfigured) {
             // TODO: map Fangraphs' column headers to your Supabase schema
-            // columns before inserting — Fangraphs exports don't match 1:1.
+            // columns before inserting -- Fangraphs exports don't match 1:1,
+            // and each report here only covers part of a player's stat
+            // line, so this should be a partial upsert keyed on player_id,
+            // not a blind overwrite.
             const { error: upsertError } = await supabase
               .from(source.supabaseTable)
               .upsert(results.data as any[])
@@ -98,25 +159,11 @@ function UploadRow({ source }: { source: UploadSource }) {
 
   return (
     <div className="card flex flex-col gap-2.5 p-3.5">
-      <div>
-        <h4 className="text-sm font-semibold text-navy-950">{source.label}</h4>
-        <p className="text-[11px] text-navy-900/45">{source.description}</p>
-      </div>
+      <h4 className="text-sm font-semibold text-navy-950">{source.label}</h4>
 
-      {source.fangraphsUrl ? (
-        <a
-          href={source.fangraphsUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="pill-button justify-center"
-        >
-          Open Fangraphs table <ExternalLink size={12} />
-        </a>
-      ) : (
-        <span className="pill-button justify-center cursor-not-allowed opacity-50">
-          Link not set yet <ExternalLink size={12} />
-        </span>
-      )}
+      <a href={source.fangraphsUrl} target="_blank" rel="noreferrer" className="pill-button justify-center">
+        Open Fangraphs table <ExternalLink size={12} />
+      </a>
 
       <input
         ref={inputRef}
@@ -132,7 +179,7 @@ function UploadRow({ source }: { source: UploadSource }) {
         <UploadCloud size={14} /> Upload CSV
       </button>
 
-      {status === 'parsing' && <p className="text-[11px] text-navy-900/50">Parsing…</p>}
+      {status === 'parsing' && <p className="text-[11px] text-navy-900/50">Parsing...</p>}
       {status === 'success' && (
         <p className="flex items-center gap-1 text-[11px] text-emerald-600">
           <CheckCircle2 size={12} /> Loaded {rowCount} rows
