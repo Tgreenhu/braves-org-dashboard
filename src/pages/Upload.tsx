@@ -13,6 +13,7 @@ import { supabase, supabaseConfigured } from '@/lib/supabaseClient'
 import { cacheClear } from '@/lib/cache'
 import { tagTotalRows, tagTotalRowsBySeason } from '@/lib/detectTotals'
 import { detectPlayerType, findColumnKey, extractYearFromFilename } from '@/lib/csvUpload'
+import { mapRow, HITTER_COLUMNS, PITCHER_COLUMNS } from '@/lib/columnMapping'
 
 interface UploadSource {
   id: string
@@ -135,10 +136,12 @@ export default function Upload() {
 //   - Season: read from a Season/Year column if the file has one
 //     (typical for a multi-year export); otherwise pulled from a 4-digit
 //     year in the filename (e.g. "2019_hitters.csv").
-// Rows land in historical_hitter_stats / historical_pitcher_stats — tables
-// nothing else in the app writes to, so this data sits in the background
-// as a fixed reference point. Multi-level total-row detection runs
-// per-season so a multi-year file doesn't cross-contaminate across years.
+// Total-row detection runs on the RAW Fangraphs columns (before mapping)
+// since it needs the original PA/IP header names; only after that are
+// rows run through columnMapping to translate them into our schema's
+// column names and drop anything unrecognized (Fangraphs' extra columns
+// like 1B, 2B, wSB, etc., which would otherwise make Supabase reject the
+// whole row).
 //
 // Parsing runs on the main thread (no Web Worker) -- PapaParse's worker
 // mode looks for its own script at a URL that doesn't exist in a bundled
@@ -210,20 +213,28 @@ function MassUploadSection() {
             const statKeys = detectedType === 'Hitter' ? HITTER_TOTALS_STAT_KEYS : PITCHER_TOTALS_STAT_KEYS
             tagTotalRowsBySeason(rows, statKeys, 'season')
 
+            const columnSpec = detectedType === 'Hitter' ? HITTER_COLUMNS : PITCHER_COLUMNS
+            const mappedRows: Record<string, any>[] = rows
+              .map(
+                (r) =>
+                  ({ ...mapRow(r, columnSpec), season: r.season, is_total: r.is_total }) as Record<string, any>,
+              )
+              .filter((r) => r.name)
+
             const table = detectedType === 'Hitter' ? 'historical_hitter_stats' : 'historical_pitcher_stats'
-            updateFile(id, { status: 'uploading', detectedType, seasons, totalRows: rows.length })
+            updateFile(id, { status: 'uploading', detectedType, seasons, totalRows: mappedRows.length })
 
             if (supabaseConfigured) {
-              for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-                const batch = rows.slice(i, i + BATCH_SIZE)
+              for (let i = 0; i < mappedRows.length; i += BATCH_SIZE) {
+                const batch = mappedRows.slice(i, i + BATCH_SIZE)
                 const { error: upsertError } = await supabase
                   .from(table)
                   .upsert(batch, { onConflict: 'season,name,team,level' })
                 if (upsertError) throw upsertError
-                updateFile(id, { rowsProcessed: Math.min(i + BATCH_SIZE, rows.length) })
+                updateFile(id, { rowsProcessed: Math.min(i + BATCH_SIZE, mappedRows.length) })
               }
             } else {
-              updateFile(id, { rowsProcessed: rows.length })
+              updateFile(id, { rowsProcessed: mappedRows.length })
             }
 
             cacheClear()
@@ -258,7 +269,6 @@ function MassUploadSection() {
         totalRows: 0,
       })),
     ])
-    // Process one at a time so batches don't all hit Supabase simultaneously.
     for (const { id, file } of incoming) {
       await processFile(file, id)
     }
@@ -363,16 +373,19 @@ function UploadRow({ source }: { source: UploadSource }) {
           if (source.detectTotals && source.totalsStatKeys) {
             rows = tagTotalRows(rows, source.totalsStatKeys)
           }
-          setRowCount(rows.length)
+
+          const columnSpec = source.supabaseTable === 'hitter_stats' ? HITTER_COLUMNS : PITCHER_COLUMNS
+          const mappedRows: Record<string, any>[] = rows
+            .map(
+              (r) => ({ ...mapRow(r, columnSpec), is_total: (r as any).is_total ?? false }) as Record<string, any>,
+            )
+            .filter((r) => r.name)
+
+          setRowCount(mappedRows.length)
           if (supabaseConfigured) {
-            // TODO: map Fangraphs' column headers to your Supabase schema
-            // columns before inserting -- Fangraphs exports don't match 1:1,
-            // and each report here only covers part of a player's stat
-            // line, so this should be a partial upsert keyed on player_id,
-            // not a blind overwrite.
             const { error: upsertError } = await supabase
               .from(source.supabaseTable)
-              .upsert(rows, { onConflict: 'name,team,level' })
+              .upsert(mappedRows, { onConflict: 'name,team,level' })
             if (upsertError) throw upsertError
           }
           cacheClear() // invalidate cached reads so other tabs re-fetch fresh data
