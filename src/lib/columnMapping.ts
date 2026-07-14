@@ -79,6 +79,34 @@ export const PITCHER_COLUMNS: ColumnSpec[] = [
   { target: 'kbb_pct', candidates: ['K-BB%', 'K/BB%', 'KBB%'], parse: parseNumber },
 ]
 
+// Narrower field sets for the Tab 4 comp pool tables — no team/counting
+// stats, just the rate stats the similarity score actually uses.
+export const COMP_HITTER_COLUMNS: ColumnSpec[] = [
+  { target: 'name', candidates: ['Name'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseString },
+  { target: 'age', candidates: ['Age'], parse: parseInteger },
+  { target: 'avg', candidates: ['AVG'], parse: parseNumber },
+  { target: 'obp', candidates: ['OBP'], parse: parseNumber },
+  { target: 'slg', candidates: ['SLG'], parse: parseNumber },
+  { target: 'ops', candidates: ['OPS'], parse: parseNumber },
+  { target: 'wrc_plus', candidates: ['wRC+'], parse: parseInteger },
+  { target: 'bb_pct', candidates: ['BB%'], parse: parseNumber },
+  { target: 'k_pct', candidates: ['K%'], parse: parseNumber },
+]
+
+export const COMP_PITCHER_COLUMNS: ColumnSpec[] = [
+  { target: 'name', candidates: ['Name'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseString },
+  { target: 'age', candidates: ['Age'], parse: parseInteger },
+  { target: 'era', candidates: ['ERA'], parse: parseNumber },
+  { target: 'fip', candidates: ['FIP'], parse: parseNumber },
+  { target: 'siera', candidates: ['SIERA'], parse: parseNumber },
+  { target: 'whip', candidates: ['WHIP'], parse: parseNumber },
+  { target: 'k_pct', candidates: ['K%'], parse: parseNumber },
+  { target: 'bb_pct', candidates: ['BB%'], parse: parseNumber },
+  { target: 'kbb_pct', candidates: ['K-BB%', 'K/BB%', 'KBB%'], parse: parseNumber },
+]
+
 /**
  * Builds a clean row containing ONLY the target schema columns, pulling
  * each value from whichever of its candidate header names is present in
