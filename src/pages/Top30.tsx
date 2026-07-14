@@ -24,9 +24,11 @@ import {
   ChevronDown,
   ChevronUp,
   Check,
+  Loader2,
 } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { getCombinedPlayerPool, findDatabaseMatch, type PoolPlayer } from '@/lib/playerPool'
+import { fetchCombinedPlayerPool, type PoolPlayer } from '@/lib/queries'
+import { supabaseConfigured } from '@/lib/supabaseClient'
 import {
   loadWorkingList,
   loadWorkingBucket,
@@ -42,16 +44,11 @@ import type { Position, Top30Entry, Top30Snapshot } from '@/types'
 
 const POSITIONS: Position[] = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'IF', 'DH', 'SP', 'RP']
 
-const STARTER_LIST: Top30Entry[] = [
-  { id: 't1', rank: 1, name: 'Trey Whitfield', position: 'RF', age: 20, playerId: 'h5', source: 'database' },
-  { id: 't2', rank: 2, name: 'Bo Halstead', position: 'SS', age: 17, playerId: 'h7', source: 'database' },
-  { id: 't3', rank: 3, name: 'Yulian Vega', position: 'C', age: 21, playerId: 'h4', source: 'database' },
-  { id: 't4', rank: 4, name: 'Rafael Beltre', position: 'SS', age: 16, playerId: null, source: 'manual' },
-]
-const STARTER_BUCKET: Top30Entry[] = [
-  { id: 'b1', rank: null, name: 'Org Depth Arm', position: 'RP', age: 24, playerId: null, source: 'manual' },
-  { id: 'b2', rank: null, name: 'Nico Salaberry', position: '2B', age: 19, playerId: null, source: 'manual' },
-]
+// Starts empty — nothing here until you actually build your own list.
+// (Working state persists to localStorage after your first edit, so this
+// only matters on a completely fresh browser/device.)
+const STARTER_LIST: Top30Entry[] = []
+const STARTER_BUCKET: Top30Entry[] = []
 
 const LIST_CONTAINER = 'top30'
 const BUCKET_CONTAINER = 'bucket'
@@ -67,6 +64,13 @@ export default function Top30() {
   const [manualForm, setManualForm] = useState({ name: '', position: 'SS' as Position, age: '' })
   const [justSubmitted, setJustSubmitted] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+
+  // Fetched once here (not per-row) so both the "Add from database" search
+  // and every manual entry's auto-link check share one Supabase round trip.
+  const [dbPool, setDbPool] = useState<PoolPlayer[] | null>(null)
+  useEffect(() => {
+    fetchCombinedPlayerPool().then(setDbPool)
+  }, [])
 
   useEffect(() => saveWorkingState(list, bucket), [list, bucket])
   useEffect(() => saveSnapshots(snapshots), [snapshots])
@@ -150,7 +154,7 @@ export default function Top30() {
   }
 
   const addFromDatabase = (player: PoolPlayer) => {
-    addEntry({ name: player.name, position: player.position, age: player.age, playerId: player.playerId, source: 'database' })
+    addEntry({ name: player.name, position: player.position as Position, age: player.age, playerId: player.playerId, source: 'database' })
   }
 
   const addManualPlayer = () => {
@@ -174,7 +178,7 @@ export default function Top30() {
     const patch = (items: Top30Entry[]) =>
       items.map((item) =>
         item.id === id
-          ? { ...item, playerId: match.playerId, position: match.position, age: match.age, source: 'database' as const }
+          ? { ...item, playerId: match.playerId, position: match.position as Position, age: match.age, source: 'database' as const }
           : item,
       )
     setList((prev) => patch(prev))
@@ -246,7 +250,23 @@ export default function Top30() {
         </div>
 
         {addMode === 'database' ? (
-          <DatabaseSearch usedPlayerIds={usedPlayerIds} onSelect={addFromDatabase} />
+          !supabaseConfigured ? (
+            <p className="text-xs text-navy-900/40">
+              Supabase isn't connected — see <code>.env.example</code>. Switch to "Add manually"
+              in the meantime.
+            </p>
+          ) : dbPool === null ? (
+            <p className="flex items-center gap-1.5 text-xs text-navy-900/40">
+              <Loader2 size={12} className="animate-spin" /> Loading players…
+            </p>
+          ) : dbPool.length === 0 ? (
+            <p className="text-xs text-navy-900/40">
+              No current-season players uploaded yet — upload stats in Tab 6 first, or switch to
+              "Add manually" for a draft pick or signee who isn't in the database yet.
+            </p>
+          ) : (
+            <DatabaseSearch pool={dbPool} usedPlayerIds={usedPlayerIds} onSelect={addFromDatabase} />
+          )
         ) : (
           <div className="space-y-1.5">
             <p className="text-[11px] text-navy-900/45">
@@ -310,6 +330,7 @@ export default function Top30() {
               onRemove={removeEntry}
               onLink={linkEntry}
               latestSnapshot={latestSnapshot}
+              dbPool={dbPool}
             />
           </DownloadableCard>
           <DownloadableCard title="Off the List" subtitle={`${bucket.length} players`} filename="braves-top-30-bucket">
@@ -320,6 +341,7 @@ export default function Top30() {
               onRemove={removeEntry}
               onLink={linkEntry}
               latestSnapshot={latestSnapshot}
+              dbPool={dbPool}
             />
           </DownloadableCard>
         </div>
@@ -408,9 +430,16 @@ function HistoryPanel({ snapshots, onDelete }: { snapshots: Top30Snapshot[]; onD
   )
 }
 
-function DatabaseSearch({ usedPlayerIds, onSelect }: { usedPlayerIds: Set<string>; onSelect: (player: PoolPlayer) => void }) {
+function DatabaseSearch({
+  pool,
+  usedPlayerIds,
+  onSelect,
+}: {
+  pool: PoolPlayer[]
+  usedPlayerIds: Set<string>
+  onSelect: (player: PoolPlayer) => void
+}) {
   const [query, setQuery] = useState('')
-  const pool = useMemo(() => getCombinedPlayerPool(), [])
 
   const results = useMemo(() => {
     if (!query.trim()) return []
@@ -469,6 +498,7 @@ function DroppableList({
   onRemove,
   onLink,
   latestSnapshot,
+  dbPool,
 }: {
   id: string
   items: Top30Entry[]
@@ -476,6 +506,7 @@ function DroppableList({
   onRemove: (id: string) => void
   onLink: (id: string, match: PoolPlayer) => void
   latestSnapshot: Top30Snapshot | undefined
+  dbPool: PoolPlayer[] | null
 }) {
   return (
     <SortableContext id={id} items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
@@ -490,6 +521,7 @@ function DroppableList({
             onRemove={onRemove}
             onLink={onLink}
             previousRank={getPreviousRank(entry, latestSnapshot)}
+            dbPool={dbPool}
           />
         ))}
       </div>
@@ -502,11 +534,13 @@ function SortablePlayerCard({
   onRemove,
   onLink,
   previousRank,
+  dbPool,
 }: {
   entry: Top30Entry
   onRemove: (id: string) => void
   onLink: (id: string, match: PoolPlayer) => void
   previousRank: number | null
+  dbPool: PoolPlayer[] | null
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: entry.id })
   const style = {
@@ -516,7 +550,14 @@ function SortablePlayerCard({
   }
   return (
     <div ref={setNodeRef} style={style}>
-      <PlayerCardVisual entry={entry} dragHandleProps={{ ...attributes, ...listeners }} onRemove={onRemove} onLink={onLink} previousRank={previousRank} />
+      <PlayerCardVisual
+        entry={entry}
+        dragHandleProps={{ ...attributes, ...listeners }}
+        onRemove={onRemove}
+        onLink={onLink}
+        previousRank={previousRank}
+        dbPool={dbPool}
+      />
     </div>
   )
 }
@@ -528,6 +569,7 @@ function PlayerCardVisual({
   onRemove,
   onLink,
   previousRank,
+  dbPool,
 }: {
   entry: Top30Entry
   dragging?: boolean
@@ -535,8 +577,12 @@ function PlayerCardVisual({
   onRemove?: (id: string) => void
   onLink?: (id: string, match: PoolPlayer) => void
   previousRank?: number | null
+  dbPool?: PoolPlayer[] | null
 }) {
-  const match = entry.source === 'manual' ? findDatabaseMatch(entry.name) : undefined
+  const match =
+    entry.source === 'manual' && dbPool
+      ? dbPool.find((p) => p.name.trim().toLowerCase() === entry.name.trim().toLowerCase())
+      : undefined
   const rankDelta = previousRank != null && entry.rank != null ? previousRank - entry.rank : null
 
   return (

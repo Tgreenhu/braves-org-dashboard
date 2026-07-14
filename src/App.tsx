@@ -48,7 +48,7 @@ export default function App() {
           </div>
           {!supabaseConfigured && (
             <span className="rounded-full border border-brave-gold/40 bg-brave-gold/10 px-2.5 py-1 text-[10px] font-medium text-brave-gold sm:text-xs">
-              Mock data mode
+              Supabase not connected
             </span>
           )}
         </div>

@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react'
-import { ArrowUpDown, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowUpDown, ChevronDown, ChevronUp, Loader2, Inbox, X } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { MOCK_HITTERS, MOCK_PITCHERS, CURRENT_SEASON } from '@/data/mockData'
+import { fetchHitters, fetchPitchers, fetchAvailableSeasons } from '@/lib/queries'
+import { supabaseConfigured } from '@/lib/supabaseClient'
+import { CURRENT_SEASON } from '@/lib/constants'
 import { ORG_LEVELS, type HitterSeasonStats, type PitcherSeasonStats, type OrgLevel } from '@/types'
 
 type PlayerMode = 'Hitter' | 'Pitcher'
@@ -46,10 +48,6 @@ const PITCHER_COLUMNS: { key: keyof PitcherSeasonStats; label: string; numeric?:
 ]
 
 export default function Players() {
-  // TODO(supabase): current season comes from hitter_stats/pitcher_stats;
-  // any year other than CURRENT_SEASON should instead query
-  // historical_hitter_stats/historical_pitcher_stats filtered to that
-  // season — the two live in separate tables (see supabase/schema.sql).
   const [mode, setMode] = useState<PlayerMode>('Hitter')
   const [levelFilter, setLevelFilter] = useState<OrgLevel[]>([])
   const [teamFilter, setTeamFilter] = useState<string[]>([])
@@ -60,28 +58,41 @@ export default function Players() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [search, setSearch] = useState('')
 
+  const [availableYears, setAvailableYears] = useState<number[]>([CURRENT_SEASON])
+  const [hitters, setHitters] = useState<HitterSeasonStats[] | null>(null)
+  const [pitchers, setPitchers] = useState<PitcherSeasonStats[] | null>(null)
+
+  useEffect(() => {
+    fetchAvailableSeasons().then(setAvailableYears)
+  }, [])
+
+  // Refetch whenever the year selection changes — current season and past
+  // seasons live in different tables (hitter_stats vs
+  // historical_hitter_stats), so this drives which tables actually get hit.
+  useEffect(() => {
+    setHitters(null)
+    setPitchers(null)
+    Promise.all([fetchHitters(yearFilter), fetchPitchers(yearFilter)]).then(([h, p]) => {
+      setHitters(h)
+      setPitchers(p)
+    })
+  }, [yearFilter])
+
+  const loading = hitters === null || pitchers === null
   const allTeams = useMemo(
-    () => Array.from(new Set([...MOCK_HITTERS, ...MOCK_PITCHERS].map((p) => p.team))).sort(),
-    [],
-  )
-  const allYears = useMemo(
-    () =>
-      Array.from(new Set([...MOCK_HITTERS, ...MOCK_PITCHERS].map((p) => p.season))).sort(
-        (a, b) => b - a,
-      ),
-    [],
+    () => Array.from(new Set([...(hitters ?? []), ...(pitchers ?? [])].map((p) => p.team))).sort(),
+    [hitters, pitchers],
   )
 
   const columns = mode === 'Hitter' ? HITTER_COLUMNS : PITCHER_COLUMNS
 
   const rows = useMemo(() => {
     const base: (HitterSeasonStats | PitcherSeasonStats)[] =
-      mode === 'Hitter' ? MOCK_HITTERS : MOCK_PITCHERS
+      (mode === 'Hitter' ? hitters : pitchers) ?? []
 
     let filtered = base.filter((p) => {
       if (levelFilter.length && !levelFilter.includes(p.level)) return false
       if (teamFilter.length && !teamFilter.includes(p.team)) return false
-      if (yearFilter.length && !yearFilter.includes(p.season)) return false
       if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false
       if (mode === 'Hitter' && (p as HitterSeasonStats).pa < minPA) return false
       if (mode === 'Pitcher' && (p as PitcherSeasonStats).ip < minIP) return false
@@ -98,7 +109,7 @@ export default function Players() {
     })
 
     return filtered
-  }, [mode, levelFilter, teamFilter, yearFilter, search, minPA, minIP, sortKey, sortDir])
+  }, [mode, hitters, pitchers, levelFilter, teamFilter, search, minPA, minIP, sortKey, sortDir])
 
   const toggleSort = (key: string) => {
     if (sortKey === key) {
@@ -175,7 +186,7 @@ export default function Players() {
         <div className="flex flex-wrap gap-3">
           <MultiSelectFilter
             label="Year"
-            options={allYears.map(String)}
+            options={availableYears.map(String)}
             selected={yearFilter.map(String)}
             onChange={(v) => setYearFilter(v.map(Number))}
           />
@@ -194,57 +205,83 @@ export default function Players() {
         </div>
       </div>
 
-      <DownloadableCard
-        title={`Braves Org ${mode}s`}
-        subtitle={`${rows.length} players shown`}
-        filename={`braves-org-players-${mode.toLowerCase()}`}
-      >
-        <div className="max-h-[70vh] overflow-auto">
-          <table className="stat-table">
-            <thead>
-              <tr>
-                {columns.map((col) => (
-                  <th key={String(col.key)}>
-                    <button
-                      onClick={() => toggleSort(String(col.key))}
-                      className="inline-flex items-center gap-1"
-                    >
-                      {col.label}
-                      {sortKey === col.key ? (
-                        sortDir === 'asc' ? (
-                          <ChevronUp size={11} />
-                        ) : (
-                          <ChevronDown size={11} />
-                        )
-                      ) : (
-                        <ArrowUpDown size={10} className="opacity-30" />
-                      )}
-                    </button>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row: any) => (
-                <tr key={`${row.playerId}-${row.season}`}>
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-sm text-navy-900/40">
+          <Loader2 size={16} className="animate-spin" /> Loading players…
+        </div>
+      ) : !supabaseConfigured ? (
+        <EmptyState
+          title="Supabase isn't connected"
+          detail="Add your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (see .env.example) to see real players here."
+        />
+      ) : (hitters?.length ?? 0) === 0 && (pitchers?.length ?? 0) === 0 ? (
+        <EmptyState
+          title="No players uploaded yet"
+          detail="Head to the Upload tab and pull in a Fangraphs export to populate this table."
+        />
+      ) : (
+        <DownloadableCard
+          title={`Braves Org ${mode}s`}
+          subtitle={`${rows.length} players shown`}
+          filename={`braves-org-players-${mode.toLowerCase()}`}
+        >
+          <div className="max-h-[70vh] overflow-auto">
+            <table className="stat-table">
+              <thead>
+                <tr>
                   {columns.map((col) => (
-                    <td key={String(col.key)}>
-                      {col.fmt ? col.fmt(row[col.key]) : row[col.key]}
-                    </td>
+                    <th key={String(col.key)}>
+                      <button
+                        onClick={() => toggleSort(String(col.key))}
+                        className="inline-flex items-center gap-1"
+                      >
+                        {col.label}
+                        {sortKey === col.key ? (
+                          sortDir === 'asc' ? (
+                            <ChevronUp size={11} />
+                          ) : (
+                            <ChevronDown size={11} />
+                          )
+                        ) : (
+                          <ArrowUpDown size={10} className="opacity-30" />
+                        )}
+                      </button>
+                    </th>
                   ))}
                 </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={columns.length} className="py-6 text-center text-navy-900/40">
-                    No players match these filters.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </DownloadableCard>
+              </thead>
+              <tbody>
+                {rows.map((row: any) => (
+                  <tr key={`${row.playerId}-${row.season}`}>
+                    {columns.map((col) => (
+                      <td key={String(col.key)}>
+                        {col.fmt ? col.fmt(row[col.key]) : row[col.key]}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={columns.length} className="py-6 text-center text-navy-900/40">
+                      No players match these filters.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </DownloadableCard>
+      )}
+    </div>
+  )
+}
+
+function EmptyState({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="card flex flex-col items-center gap-2 px-6 py-14 text-center">
+      <Inbox size={22} className="text-navy-950/20" />
+      <p className="text-sm font-medium text-navy-900">{title}</p>
+      <p className="max-w-md text-xs text-navy-900/50">{detail}</p>
     </div>
   )
 }

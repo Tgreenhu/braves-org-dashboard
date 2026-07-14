@@ -1,5 +1,8 @@
+import { useEffect, useState } from 'react'
+import { Loader2, Inbox } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { MOCK_TEAM_RECORDS } from '@/data/mockData'
+import { fetchTeamLevelRecords } from '@/lib/queries'
+import { supabaseConfigured } from '@/lib/supabaseClient'
 import type { TeamLevelRecord } from '@/types'
 
 const LEVEL_COLOR: Record<string, string> = {
@@ -13,18 +16,46 @@ const LEVEL_COLOR: Record<string, string> = {
 }
 
 export default function OrgOverview() {
-  // TODO(supabase): replace MOCK_TEAM_RECORDS with
-  // useOrgData() -> select * from team_level_records order by level
-  const records = MOCK_TEAM_RECORDS
+  const [records, setRecords] = useState<TeamLevelRecord[] | null>(null)
+
+  useEffect(() => {
+    fetchTeamLevelRecords().then(setRecords)
+  }, [])
 
   return (
     <div className="space-y-4">
       <PageIntro />
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        {records.map((rec) => (
-          <LevelCard key={rec.level} record={rec} />
-        ))}
-      </div>
+
+      {records === null ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-sm text-navy-900/40">
+          <Loader2 size={16} className="animate-spin" /> Loading team records…
+        </div>
+      ) : !supabaseConfigured ? (
+        <EmptyState
+          title="Supabase isn't connected"
+          detail="Add your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (see .env.example) to see real records here."
+        />
+      ) : records.length === 0 ? (
+        <EmptyState
+          title="No team records yet"
+          detail={
+            <>
+              This tab reads from the <code>team_level_records</code> table, which doesn't have a
+              CSV upload flow yet in Tab 6 — win/loss and split data isn't part of Fangraphs'
+              standard player leaderboard exports. For now, insert rows directly in the Supabase
+              Table Editor (or SQL Editor) matching the columns in{' '}
+              <code>supabase/schema.sql</code>. Happy to build a dedicated upload/edit form for
+              this table next if you want it.
+            </>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {records.map((rec) => (
+            <LevelCard key={rec.level} record={rec} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -38,6 +69,16 @@ function PageIntro() {
           Record, splits, and team stat lines for every affiliate — MLB down to DSL.
         </p>
       </div>
+    </div>
+  )
+}
+
+function EmptyState({ title, detail }: { title: string; detail: React.ReactNode }) {
+  return (
+    <div className="card flex flex-col items-center gap-2 px-6 py-14 text-center">
+      <Inbox size={22} className="text-navy-950/20" />
+      <p className="text-sm font-medium text-navy-900">{title}</p>
+      <p className="max-w-md text-xs text-navy-900/50">{detail}</p>
     </div>
   )
 }

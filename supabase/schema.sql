@@ -37,11 +37,17 @@ create table if not exists team_level_records (
 );
 
 -- ---------------------------------------------------------------------
--- Tab 2 / 3 / 4: Players — hitters and pitchers, one row per player per
--- level per season snapshot (re-uploading a level via Tab 6 upserts here)
+-- Tab 2 / 3 / 4: Players — hitters and pitchers. One row per player PER
+-- LEVEL this season, plus one additional row per player with is_total =
+-- true representing their combined stat line across every level (this
+-- is the row Fangraphs already includes for multi-level players — see
+-- lib/detectTotals.ts for how uploads identify which row that is).
+-- Players who only played at one level all year just get a single row
+-- with is_total = true, since that row already IS their season total.
 -- ---------------------------------------------------------------------
 create table if not exists hitter_stats (
-  player_id text primary key,
+  id uuid primary key default gen_random_uuid(),
+  player_id text, -- internal id, nullable until Tab 5 linking assigns one
   name text not null,
   level text not null check (level in ('MLB','AAA','AA','High-A','A','FCL','DSL')),
   team text not null,
@@ -54,11 +60,14 @@ create table if not exists hitter_stats (
   bb_pct numeric(5,2), k_pct numeric(5,2),
   hr int, sb int,
   mlb_games_career int not null default 0,
-  updated_at timestamptz not null default now()
+  is_total boolean not null default false,
+  updated_at timestamptz not null default now(),
+  unique (name, team, level)
 );
 
 create table if not exists pitcher_stats (
-  player_id text primary key,
+  id uuid primary key default gen_random_uuid(),
+  player_id text,
   name text not null,
   level text not null check (level in ('MLB','AAA','AA','High-A','A','FCL','DSL')),
   team text not null,
@@ -69,7 +78,9 @@ create table if not exists pitcher_stats (
   era numeric(4,2), fip numeric(4,2), siera numeric(4,2), whip numeric(4,2),
   k_pct numeric(5,2), bb_pct numeric(5,2), kbb_pct numeric(5,2),
   mlb_games_career int not null default 0,
-  updated_at timestamptz not null default now()
+  is_total boolean not null default false,
+  updated_at timestamptz not null default now(),
+  unique (name, team, level)
 );
 
 -- ---------------------------------------------------------------------
@@ -131,6 +142,49 @@ create table if not exists top_30_snapshots (
 );
 
 -- ---------------------------------------------------------------------
+-- Historical archive — past-season data, uploaded once and left alone.
+-- Deliberately separate from hitter_stats/pitcher_stats (which represent
+-- the CURRENT season and get refreshed by every Tab 6 upload) so old years
+-- never get touched or overwritten by a live-season re-upload. One row per
+-- player per season per level; re-uploading the same season/player/team/
+-- level pair updates that row instead of duplicating it (handy if you spot
+-- a typo in an old file), but nothing else ever writes to these tables.
+-- ---------------------------------------------------------------------
+create table if not exists historical_hitter_stats (
+  id uuid primary key default gen_random_uuid(),
+  season int not null,
+  level text,
+  name text not null,
+  team text,
+  position text,
+  age int,
+  g int, pa int, ab int,
+  avg numeric(4,3), obp numeric(4,3), slg numeric(4,3), ops numeric(4,3),
+  wrc_plus int,
+  bb_pct numeric(5,2), k_pct numeric(5,2),
+  hr int, sb int,
+  is_total boolean not null default false,
+  uploaded_at timestamptz not null default now(),
+  unique (season, name, team, level)
+);
+
+create table if not exists historical_pitcher_stats (
+  id uuid primary key default gen_random_uuid(),
+  season int not null,
+  level text,
+  name text not null,
+  team text,
+  position text,
+  age int,
+  g int, gs int, ip numeric(5,1),
+  era numeric(4,2), fip numeric(4,2), siera numeric(4,2), whip numeric(4,2),
+  k_pct numeric(5,2), bb_pct numeric(5,2), kbb_pct numeric(5,2),
+  is_total boolean not null default false,
+  uploaded_at timestamptz not null default now(),
+  unique (season, name, team, level)
+);
+
+-- ---------------------------------------------------------------------
 -- Tab 6: Upload audit log — every CSV pushed through the upload center
 -- ---------------------------------------------------------------------
 create table if not exists upload_log (
@@ -155,6 +209,8 @@ alter table prospect_comp_pool_hitters enable row level security;
 alter table prospect_comp_pool_pitchers enable row level security;
 alter table top_30_list enable row level security;
 alter table top_30_snapshots enable row level security;
+alter table historical_hitter_stats enable row level security;
+alter table historical_pitcher_stats enable row level security;
 alter table upload_log enable row level security;
 
 create policy "public read" on team_level_records for select using (true);
@@ -164,7 +220,19 @@ create policy "public read" on prospect_comp_pool_hitters for select using (true
 create policy "public read" on prospect_comp_pool_pitchers for select using (true);
 create policy "public read" on top_30_list for select using (true);
 create policy "public read" on top_30_snapshots for select using (true);
+create policy "public read" on historical_hitter_stats for select using (true);
+create policy "public read" on historical_pitcher_stats for select using (true);
 create policy "public read" on upload_log for select using (true);
+
+-- The historical archive is uploaded straight from the browser (Tab 6) using
+-- the anon key, unlike the other tables, so it needs explicit write access.
+-- Since re-uploading the same season/player/team/level just updates that
+-- row (see the unique constraint above), this is safe for a single-admin
+-- tool — tighten with real auth before handing edit access to anyone else.
+create policy "anon upload" on historical_hitter_stats for insert with check (true);
+create policy "anon upload update" on historical_hitter_stats for update using (true);
+create policy "anon upload" on historical_pitcher_stats for insert with check (true);
+create policy "anon upload update" on historical_pitcher_stats for update using (true);
 
 -- NOTE: no insert/update/delete policies are created here on purpose —
 -- until you add auth, writes only work via the Supabase dashboard or a

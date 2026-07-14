@@ -1,5 +1,9 @@
+import { useEffect, useState } from 'react'
+import { Loader2, Inbox } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { MOCK_HITTERS, MOCK_PITCHERS, CURRENT_SEASON } from '@/data/mockData'
+import { fetchHitters, fetchPitchers } from '@/lib/queries'
+import { supabaseConfigured } from '@/lib/supabaseClient'
+import { CURRENT_SEASON } from '@/lib/constants'
 import { buildAllOrgTeams, type OrgTeam, type OrgTeamSlot } from '@/lib/allOrgTeam'
 import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
 
@@ -11,11 +15,17 @@ function isPitcher(p: HitterSeasonStats | PitcherSeasonStats): p is PitcherSeaso
 }
 
 export default function AllOrgTeam() {
-  // TODO(supabase): source hitters/pitchers from the same tables as Tab 2,
-  // filtered to the current season, before running buildAllOrgTeams()
-  const currentSeasonHitters = MOCK_HITTERS.filter((h) => h.season === CURRENT_SEASON)
-  const currentSeasonPitchers = MOCK_PITCHERS.filter((p) => p.season === CURRENT_SEASON)
-  const teams = buildAllOrgTeams(currentSeasonHitters, currentSeasonPitchers)
+  const [teams, setTeams] = useState<OrgTeam[] | null>(null)
+  const [hasAnyData, setHasAnyData] = useState(false)
+
+  useEffect(() => {
+    Promise.all([fetchHitters([CURRENT_SEASON]), fetchPitchers([CURRENT_SEASON])]).then(
+      ([hitters, pitchers]) => {
+        setHasAnyData(hitters.length > 0 || pitchers.length > 0)
+        setTeams(buildAllOrgTeams(hitters, pitchers))
+      },
+    )
+  }, [])
 
   return (
     <div className="space-y-4">
@@ -28,11 +38,37 @@ export default function AllOrgTeam() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        {teams.map((team) => (
-          <TeamCard key={team.teamNumber} team={team} />
-        ))}
-      </div>
+      {teams === null ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-sm text-navy-900/40">
+          <Loader2 size={16} className="animate-spin" /> Loading players…
+        </div>
+      ) : !supabaseConfigured ? (
+        <EmptyState
+          title="Supabase isn't connected"
+          detail="Add your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (see .env.example) to see real teams here."
+        />
+      ) : !hasAnyData ? (
+        <EmptyState
+          title="No current-season players uploaded yet"
+          detail="Head to the Upload tab and pull in this season's Fangraphs exports first."
+        />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          {teams.map((team) => (
+            <TeamCard key={team.teamNumber} team={team} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EmptyState({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="card flex flex-col items-center gap-2 px-6 py-14 text-center">
+      <Inbox size={22} className="text-navy-950/20" />
+      <p className="text-sm font-medium text-navy-900">{title}</p>
+      <p className="max-w-md text-xs text-navy-900/50">{detail}</p>
     </div>
   )
 }

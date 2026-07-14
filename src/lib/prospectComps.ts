@@ -1,44 +1,9 @@
 import type { HitterSeasonStats, PitcherSeasonStats, OrgLevel } from '@/types'
-
-/**
- * TODO(data): This is a 12-name placeholder standing in for the real
- * 1000-player comp pool (500 notable hitters / 500 notable pitchers from the
- * last 10 years of MiLB) described in the brief. Build the real pool as a
- * Supabase table `prospect_comp_pool` with the same shape as
- * HitterSeasonStats/PitcherSeasonStats plus `ageAtLevel` and an outcome
- * label (e.g. "MLB regular", "org depth", "bust") so the similarity engine
- * below can eventually be validated against actual outcomes.
- */
-export interface CompPoolHitter extends HitterSeasonStats {
-  years: string // e.g. "2016-2019"
-  outcome: string // one-line career outcome for the blurb
-}
-export interface CompPoolPitcher extends PitcherSeasonStats {
-  years: string
-  outcome: string
-}
-
-export const COMP_POOL_HITTERS: CompPoolHitter[] = [
-  { playerId: 'c-h1', name: 'Austin Riley Comp A', season: 2017, level: 'AA', team: 'League Avg', position: '3B', age: 21, bats: 'R', g: 118, pa: 502, ab: 452, avg: 0.269, obp: 0.335, slg: 0.486, ops: 0.821, wrcPlus: 128, bbPct: 8.1, kPct: 24.5, hr: 22, sb: 3, mlbGamesCareer: 0, years: '2017-2018', outcome: 'Became an MLB everyday 3B / All-Star' },
-  { playerId: 'c-h2', name: 'Ozzie Albies Comp', season: 2016, level: 'A', team: 'League Avg', position: '2B', age: 19, bats: 'S', g: 121, pa: 520, ab: 468, avg: 0.312, obp: 0.368, slg: 0.464, ops: 0.832, wrcPlus: 141, bbPct: 7.4, kPct: 11.2, hr: 9, sb: 33, mlbGamesCareer: 0, years: '2016', outcome: 'Became an MLB everyday 2B / All-Star' },
-  { playerId: 'c-h3', name: 'Org Depth OF Comp', season: 2015, level: 'AA', team: 'League Avg', position: 'CF', age: 24, bats: 'R', g: 109, pa: 460, ab: 415, avg: 0.241, obp: 0.301, slg: 0.372, ops: 0.673, wrcPlus: 88, bbPct: 6.9, kPct: 26.8, hr: 8, sb: 11, mlbGamesCareer: 41, years: '2015-2019', outcome: 'Topped out as AAA depth, brief MLB cup of coffee' },
-  { playerId: 'c-h4', name: 'Catching Prospect Comp', season: 2018, level: 'High-A', team: 'League Avg', position: 'C', age: 20, bats: 'L', g: 88, pa: 356, ab: 312, avg: 0.258, obp: 0.347, slg: 0.401, ops: 0.748, wrcPlus: 115, bbPct: 10.8, kPct: 19.4, hr: 9, sb: 1, mlbGamesCareer: 0, years: '2018-2019', outcome: 'Became a fringe MLB backup catcher' },
-  { playerId: 'c-h5', name: 'Speedy SS Comp', season: 2014, level: 'A', team: 'League Avg', position: 'SS', age: 18, bats: 'R', g: 95, pa: 402, ab: 354, avg: 0.271, obp: 0.351, slg: 0.368, ops: 0.719, wrcPlus: 112, bbPct: 9.7, kPct: 18.9, hr: 3, sb: 41, mlbGamesCareer: 0, years: '2014-2015', outcome: 'Became a bench utility infielder' },
-  { playerId: 'c-h6', name: 'Power Corner Comp', season: 2013, level: 'AAA', team: 'League Avg', position: '1B', age: 23, bats: 'R', g: 112, pa: 470, ab: 421, avg: 0.249, obp: 0.322, slg: 0.478, ops: 0.8, wrcPlus: 119, bbPct: 8.9, kPct: 27.1, hr: 24, sb: 1, mlbGamesCareer: 55, years: '2013-2016', outcome: 'Quad-A power bat, short MLB stints' },
-]
-
-export const COMP_POOL_PITCHERS: CompPoolPitcher[] = [
-  { playerId: 'c-p1', name: 'Spencer Strider Comp', season: 2021, level: 'AA', team: 'League Avg', position: 'SP', age: 22, throws: 'R', g: 15, gs: 15, ip: 80.0, era: 2.7, fip: 2.55, siera: 2.6, whip: 0.98, kPct: 36.1, bbPct: 8.2, kbbPct: 27.9, mlbGamesCareer: 0, years: '2021', outcome: 'Became an MLB frontline SP / All-Star' },
-  { playerId: 'c-p2', name: 'Bullpen Riser Comp', season: 2019, level: 'High-A', team: 'League Avg', position: 'RP', age: 21, throws: 'L', g: 30, gs: 0, ip: 42.0, era: 2.35, fip: 2.7, siera: 2.75, whip: 1.01, kPct: 32.4, bbPct: 9.1, kbbPct: 23.3, mlbGamesCareer: 0, years: '2019-2020', outcome: 'Became a reliable MLB middle reliever' },
-  { playerId: 'c-p3', name: 'Command Lefty Comp', season: 2016, level: 'AA', team: 'League Avg', position: 'SP', age: 23, throws: 'L', g: 18, gs: 18, ip: 98.0, era: 3.6, fip: 3.75, siera: 3.7, whip: 1.15, kPct: 22.8, bbPct: 5.4, kbbPct: 17.4, mlbGamesCareer: 12, years: '2016-2018', outcome: 'Became a back-end MLB starter / swingman' },
-  { playerId: 'c-p4', name: 'Org Arm Comp', season: 2017, level: 'A', team: 'League Avg', position: 'SP', age: 20, throws: 'R', g: 16, gs: 16, ip: 70.1, era: 4.5, fip: 4.4, siera: 4.35, whip: 1.32, kPct: 19.5, bbPct: 10.2, kbbPct: 9.3, mlbGamesCareer: 0, years: '2017-2018', outcome: 'Topped out at AA, never reached MLB' },
-  { playerId: 'c-p5', name: 'Fireballer Comp', season: 2015, level: 'DSL', team: 'League Avg', position: 'SP', age: 17, throws: 'R', g: 10, gs: 8, ip: 36.0, era: 2.9, fip: 3.0, siera: 3.05, whip: 1.08, kPct: 29.7, bbPct: 9.8, kbbPct: 19.9, mlbGamesCareer: 0, years: '2015', outcome: 'Became a hard-throwing MLB reliever' },
-  { playerId: 'c-p6', name: 'Sinkerballer Comp', season: 2014, level: 'AAA', team: 'League Avg', position: 'SP', age: 24, throws: 'R', g: 20, gs: 20, ip: 112.0, era: 4.1, fip: 4.05, siera: 4.0, whip: 1.28, kPct: 18.9, bbPct: 6.7, kbbPct: 12.2, mlbGamesCareer: 30, years: '2014-2017', outcome: 'Became a spot-starter / long reliever' },
-]
+import type { CompPoolHitterRow, CompPoolPitcherRow } from '@/lib/queries'
 
 // Rough level-average ages used to compute an "age relative to level" score —
 // the heaviest-weighted input per the brief. Replace with real league-wide
-// averages computed from the full comp pool once it's built.
+// averages computed from the full comp pool once it's built out.
 export const LEVEL_AVG_AGE: Record<OrgLevel, number> = {
   MLB: 27.5,
   AAA: 25.5,
@@ -74,9 +39,12 @@ function normalize(value: number, min: number, max: number) {
   return Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100))
 }
 
-export function getHitterComps(player: HitterSeasonStats, topN = 5): ProspectComp[] {
+export function getHitterComps(
+  player: HitterSeasonStats,
+  pool: CompPoolHitterRow[],
+  topN = 5,
+): ProspectComp[] {
   const playerAgeDelta = ageToLevelDelta(player.age, player.level)
-  const pool = COMP_POOL_HITTERS
 
   const scored = pool.map((comp) => {
     const compAgeDelta = ageToLevelDelta(comp.age, comp.level)
@@ -119,9 +87,12 @@ export function getHitterComps(player: HitterSeasonStats, topN = 5): ProspectCom
   return scored.sort((a, b) => b.similarityScore - a.similarityScore).slice(0, topN)
 }
 
-export function getPitcherComps(player: PitcherSeasonStats, topN = 5): ProspectComp[] {
+export function getPitcherComps(
+  player: PitcherSeasonStats,
+  pool: CompPoolPitcherRow[],
+  topN = 5,
+): ProspectComp[] {
   const playerAgeDelta = ageToLevelDelta(player.age, player.level)
-  const pool = COMP_POOL_PITCHERS
 
   const scored = pool.map((comp) => {
     const compAgeDelta = ageToLevelDelta(comp.age, comp.level)
