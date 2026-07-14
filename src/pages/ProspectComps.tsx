@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Legend, ResponsiveContainer } from 'recharts'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { MOCK_HITTERS, MOCK_PITCHERS } from '@/data/mockData'
+import { MOCK_HITTERS, MOCK_PITCHERS, CURRENT_SEASON } from '@/data/mockData'
 import { getHitterComps, getPitcherComps, type ProspectComp } from '@/lib/prospectComps'
 import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
 
@@ -11,8 +11,12 @@ export default function ProspectComps() {
   // TODO(supabase): eligible players = every org hitter/pitcher where
   // career mlb_games_career < 162 (any team, any season) — enforce this
   // filter in the SQL view, not just client-side, once real data lands.
-  const eligibleHitters = MOCK_HITTERS.filter((h) => h.mlbGamesCareer < MLB_GAMES_ELIGIBILITY_CAP)
-  const eligiblePitchers = MOCK_PITCHERS.filter((p) => p.mlbGamesCareer < MLB_GAMES_ELIGIBILITY_CAP)
+  const eligibleHitters = MOCK_HITTERS.filter(
+    (h) => h.season === CURRENT_SEASON && h.mlbGamesCareer < MLB_GAMES_ELIGIBILITY_CAP,
+  )
+  const eligiblePitchers = MOCK_PITCHERS.filter(
+    (p) => p.season === CURRENT_SEASON && p.mlbGamesCareer < MLB_GAMES_ELIGIBILITY_CAP,
+  )
 
   const [selectedId, setSelectedId] = useState<string>(eligibleHitters[0]?.playerId ?? '')
 
