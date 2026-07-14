@@ -1,10 +1,12 @@
-import { MOCK_HITTERS, MOCK_PITCHERS } from '@/data/mockData'
+import { MOCK_HITTERS, MOCK_PITCHERS, CURRENT_SEASON } from '@/data/mockData'
 import type { OrgLevel, Position } from '@/types'
 
 /**
  * Flattened view of every player currently in the database (hitters +
  * pitchers), used anywhere the app needs a simple "pick a player" search —
- * right now that's Tab 5's "Add from database" flow.
+ * right now that's Tab 5's "Add from database" flow. Filtered to the
+ * current season so a past-season Historical Archive row for the same
+ * player doesn't show up as a second, confusing entry.
  *
  * TODO(supabase): once hitter_stats/pitcher_stats are read from Supabase
  * instead of mockData, this function's shape stays the same — just swap
@@ -22,7 +24,7 @@ export interface PoolPlayer {
 
 export function getCombinedPlayerPool(): PoolPlayer[] {
   return [
-    ...MOCK_HITTERS.map((h) => ({
+    ...MOCK_HITTERS.filter((h) => h.season === CURRENT_SEASON).map((h) => ({
       playerId: h.playerId,
       name: h.name,
       position: h.position,
@@ -31,7 +33,7 @@ export function getCombinedPlayerPool(): PoolPlayer[] {
       team: h.team,
       playerType: 'Hitter' as const,
     })),
-    ...MOCK_PITCHERS.map((p) => ({
+    ...MOCK_PITCHERS.filter((p) => p.season === CURRENT_SEASON).map((p) => ({
       playerId: p.playerId,
       name: p.name,
       position: p.position,
