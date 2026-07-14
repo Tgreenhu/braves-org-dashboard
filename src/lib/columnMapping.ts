@@ -22,6 +22,17 @@ function parseNumber(raw: any): number | null {
   return Number.isNaN(n) ? null : n
 }
 
+// Some "whole number" stats (wRC+ especially) come through some Fangraphs
+// reports — the "Advanced" one in particular — as a long precise decimal
+// (e.g. 80.37196200961044) rather than the rounded value the website
+// displays. Our schema columns for these are plain integers, so round
+// instead of erroring. Postgres would otherwise reject the whole row with
+// "invalid input syntax for type integer".
+function parseInteger(raw: any): number | null {
+  const n = parseNumber(raw)
+  return n === null ? null : Math.round(n)
+}
+
 function parseString(raw: any): string | null {
   if (raw === undefined || raw === null) return null
   const s = String(raw).trim()
@@ -33,20 +44,20 @@ export const HITTER_COLUMNS: ColumnSpec[] = [
   { target: 'team', candidates: ['Team'], parse: parseString },
   { target: 'level', candidates: ['Level', 'Lev'], parse: parseString },
   { target: 'position', candidates: ['Pos', 'Position'], parse: parseString },
-  { target: 'age', candidates: ['Age'], parse: parseNumber },
+  { target: 'age', candidates: ['Age'], parse: parseInteger },
   { target: 'bats', candidates: ['Bats', 'B'], parse: parseString },
-  { target: 'g', candidates: ['G'], parse: parseNumber },
-  { target: 'pa', candidates: ['PA'], parse: parseNumber },
-  { target: 'ab', candidates: ['AB'], parse: parseNumber },
+  { target: 'g', candidates: ['G'], parse: parseInteger },
+  { target: 'pa', candidates: ['PA'], parse: parseInteger },
+  { target: 'ab', candidates: ['AB'], parse: parseInteger },
   { target: 'avg', candidates: ['AVG'], parse: parseNumber },
   { target: 'obp', candidates: ['OBP'], parse: parseNumber },
   { target: 'slg', candidates: ['SLG'], parse: parseNumber },
   { target: 'ops', candidates: ['OPS'], parse: parseNumber },
-  { target: 'wrc_plus', candidates: ['wRC+'], parse: parseNumber },
+  { target: 'wrc_plus', candidates: ['wRC+'], parse: parseInteger },
   { target: 'bb_pct', candidates: ['BB%'], parse: parseNumber },
   { target: 'k_pct', candidates: ['K%'], parse: parseNumber },
-  { target: 'hr', candidates: ['HR'], parse: parseNumber },
-  { target: 'sb', candidates: ['SB'], parse: parseNumber },
+  { target: 'hr', candidates: ['HR'], parse: parseInteger },
+  { target: 'sb', candidates: ['SB'], parse: parseInteger },
 ]
 
 export const PITCHER_COLUMNS: ColumnSpec[] = [
@@ -54,10 +65,10 @@ export const PITCHER_COLUMNS: ColumnSpec[] = [
   { target: 'team', candidates: ['Team'], parse: parseString },
   { target: 'level', candidates: ['Level', 'Lev'], parse: parseString },
   { target: 'position', candidates: ['Pos', 'Role'], parse: parseString },
-  { target: 'age', candidates: ['Age'], parse: parseNumber },
+  { target: 'age', candidates: ['Age'], parse: parseInteger },
   { target: 'throws', candidates: ['Throws', 'T'], parse: parseString },
-  { target: 'g', candidates: ['G'], parse: parseNumber },
-  { target: 'gs', candidates: ['GS'], parse: parseNumber },
+  { target: 'g', candidates: ['G'], parse: parseInteger },
+  { target: 'gs', candidates: ['GS'], parse: parseInteger },
   { target: 'ip', candidates: ['IP'], parse: parseNumber },
   { target: 'era', candidates: ['ERA'], parse: parseNumber },
   { target: 'fip', candidates: ['FIP'], parse: parseNumber },
