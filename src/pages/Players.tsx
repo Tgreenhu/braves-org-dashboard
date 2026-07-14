@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
 import { ArrowUpDown, ChevronDown, ChevronUp, X } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { MOCK_HITTERS, MOCK_PITCHERS } from '@/data/mockData'
+import { MOCK_HITTERS, MOCK_PITCHERS, CURRENT_SEASON } from '@/data/mockData'
 import { ORG_LEVELS, type HitterSeasonStats, type PitcherSeasonStats, type OrgLevel } from '@/types'
 
 type PlayerMode = 'Hitter' | 'Pitcher'
 
 const HITTER_COLUMNS: { key: keyof HitterSeasonStats; label: string; numeric?: boolean; fmt?: (v: number) => string }[] = [
   { key: 'name', label: 'Name' },
+  { key: 'season', label: 'Year', numeric: true },
   { key: 'level', label: 'Lvl' },
   { key: 'team', label: 'Team' },
   { key: 'position', label: 'Pos' },
@@ -27,6 +28,7 @@ const HITTER_COLUMNS: { key: keyof HitterSeasonStats; label: string; numeric?: b
 
 const PITCHER_COLUMNS: { key: keyof PitcherSeasonStats; label: string; numeric?: boolean; fmt?: (v: number) => string }[] = [
   { key: 'name', label: 'Name' },
+  { key: 'season', label: 'Year', numeric: true },
   { key: 'level', label: 'Lvl' },
   { key: 'team', label: 'Team' },
   { key: 'position', label: 'Role' },
@@ -44,11 +46,14 @@ const PITCHER_COLUMNS: { key: keyof PitcherSeasonStats; label: string; numeric?:
 ]
 
 export default function Players() {
-  // TODO(supabase): replace with useOrgData() reading `hitter_stats` /
-  // `pitcher_stats` tables (see supabase/schema.sql)
+  // TODO(supabase): current season comes from hitter_stats/pitcher_stats;
+  // any year other than CURRENT_SEASON should instead query
+  // historical_hitter_stats/historical_pitcher_stats filtered to that
+  // season — the two live in separate tables (see supabase/schema.sql).
   const [mode, setMode] = useState<PlayerMode>('Hitter')
   const [levelFilter, setLevelFilter] = useState<OrgLevel[]>([])
   const [teamFilter, setTeamFilter] = useState<string[]>([])
+  const [yearFilter, setYearFilter] = useState<number[]>([CURRENT_SEASON])
   const [minPA, setMinPA] = useState(0)
   const [minIP, setMinIP] = useState(0)
   const [sortKey, setSortKey] = useState<string>(mode === 'Hitter' ? 'ops' : 'era')
@@ -57,6 +62,13 @@ export default function Players() {
 
   const allTeams = useMemo(
     () => Array.from(new Set([...MOCK_HITTERS, ...MOCK_PITCHERS].map((p) => p.team))).sort(),
+    [],
+  )
+  const allYears = useMemo(
+    () =>
+      Array.from(new Set([...MOCK_HITTERS, ...MOCK_PITCHERS].map((p) => p.season))).sort(
+        (a, b) => b - a,
+      ),
     [],
   )
 
@@ -69,6 +81,7 @@ export default function Players() {
     let filtered = base.filter((p) => {
       if (levelFilter.length && !levelFilter.includes(p.level)) return false
       if (teamFilter.length && !teamFilter.includes(p.team)) return false
+      if (yearFilter.length && !yearFilter.includes(p.season)) return false
       if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false
       if (mode === 'Hitter' && (p as HitterSeasonStats).pa < minPA) return false
       if (mode === 'Pitcher' && (p as PitcherSeasonStats).ip < minIP) return false
@@ -85,7 +98,7 @@ export default function Players() {
     })
 
     return filtered
-  }, [mode, levelFilter, teamFilter, search, minPA, minIP, sortKey, sortDir])
+  }, [mode, levelFilter, teamFilter, yearFilter, search, minPA, minIP, sortKey, sortDir])
 
   const toggleSort = (key: string) => {
     if (sortKey === key) {
@@ -107,7 +120,8 @@ export default function Players() {
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-semibold text-navy-900 sm:text-xl">Players</h2>
         <p className="text-xs text-navy-900/50 sm:text-sm">
-          Full organizational player database — sortable, filterable, exportable.
+          Full organizational player database — sortable, filterable, exportable. Defaults to the
+          current season; add past years from the Historical Archive to compare.
         </p>
       </div>
 
@@ -160,6 +174,12 @@ export default function Players() {
         {/* Multi-select filters */}
         <div className="flex flex-wrap gap-3">
           <MultiSelectFilter
+            label="Year"
+            options={allYears.map(String)}
+            selected={yearFilter.map(String)}
+            onChange={(v) => setYearFilter(v.map(Number))}
+          />
+          <MultiSelectFilter
             label="Level"
             options={ORG_LEVELS}
             selected={levelFilter}
@@ -206,7 +226,7 @@ export default function Players() {
             </thead>
             <tbody>
               {rows.map((row: any) => (
-                <tr key={row.playerId}>
+                <tr key={`${row.playerId}-${row.season}`}>
                   {columns.map((col) => (
                     <td key={String(col.key)}>
                       {col.fmt ? col.fmt(row[col.key]) : row[col.key]}
