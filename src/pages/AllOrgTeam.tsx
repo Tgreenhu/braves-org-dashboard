@@ -1,5 +1,5 @@
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { MOCK_HITTERS, MOCK_PITCHERS } from '@/data/mockData'
+import { MOCK_HITTERS, MOCK_PITCHERS, CURRENT_SEASON } from '@/data/mockData'
 import { buildAllOrgTeams, type OrgTeam, type OrgTeamSlot } from '@/lib/allOrgTeam'
 import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
 
@@ -13,7 +13,9 @@ function isPitcher(p: HitterSeasonStats | PitcherSeasonStats): p is PitcherSeaso
 export default function AllOrgTeam() {
   // TODO(supabase): source hitters/pitchers from the same tables as Tab 2,
   // filtered to the current season, before running buildAllOrgTeams()
-  const teams = buildAllOrgTeams(MOCK_HITTERS, MOCK_PITCHERS)
+  const currentSeasonHitters = MOCK_HITTERS.filter((h) => h.season === CURRENT_SEASON)
+  const currentSeasonPitchers = MOCK_PITCHERS.filter((p) => p.season === CURRENT_SEASON)
+  const teams = buildAllOrgTeams(currentSeasonHitters, currentSeasonPitchers)
 
   return (
     <div className="space-y-4">
