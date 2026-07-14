@@ -39,10 +39,38 @@ function parseString(raw: any): string | null {
   return s === '' ? null : s
 }
 
+// Fangraphs' level labels don't match our display labels 1:1 (e.g. "A+"
+// instead of "High-A"). Known variants get normalized; anything we don't
+// recognize passes through unchanged rather than being guessed at — the
+// database no longer hard-rejects unrecognized values (see the dropped
+// check constraint in schema.sql), so an unmapped label just shows up
+// as-is instead of crashing the upload or being silently mislabeled.
+const LEVEL_ALIASES: Record<string, string> = {
+  MLB: 'MLB',
+  AAA: 'AAA',
+  AA: 'AA',
+  'A+': 'High-A',
+  'HIGH-A': 'High-A',
+  'HIGH A': 'High-A',
+  A: 'A',
+  'A-': 'A',
+  'LOW-A': 'A',
+  'SINGLE-A': 'A',
+  FCL: 'FCL',
+  GCL: 'FCL', // Florida Complex League's old name
+  DSL: 'DSL',
+}
+
+function parseLevel(raw: any): string | null {
+  const s = parseString(raw)
+  if (!s) return null
+  return LEVEL_ALIASES[s.toUpperCase()] ?? s
+}
+
 export const HITTER_COLUMNS: ColumnSpec[] = [
   { target: 'name', candidates: ['Name'], parse: parseString },
   { target: 'team', candidates: ['Team'], parse: parseString },
-  { target: 'level', candidates: ['Level', 'Lev'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseLevel },
   { target: 'position', candidates: ['Pos', 'Position'], parse: parseString },
   { target: 'age', candidates: ['Age'], parse: parseInteger },
   { target: 'bats', candidates: ['Bats', 'B'], parse: parseString },
@@ -63,7 +91,7 @@ export const HITTER_COLUMNS: ColumnSpec[] = [
 export const PITCHER_COLUMNS: ColumnSpec[] = [
   { target: 'name', candidates: ['Name'], parse: parseString },
   { target: 'team', candidates: ['Team'], parse: parseString },
-  { target: 'level', candidates: ['Level', 'Lev'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseLevel },
   { target: 'position', candidates: ['Pos', 'Role'], parse: parseString },
   { target: 'age', candidates: ['Age'], parse: parseInteger },
   { target: 'throws', candidates: ['Throws', 'T'], parse: parseString },
@@ -83,7 +111,7 @@ export const PITCHER_COLUMNS: ColumnSpec[] = [
 // stats, just the rate stats the similarity score actually uses.
 export const COMP_HITTER_COLUMNS: ColumnSpec[] = [
   { target: 'name', candidates: ['Name'], parse: parseString },
-  { target: 'level', candidates: ['Level', 'Lev'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseLevel },
   { target: 'age', candidates: ['Age'], parse: parseInteger },
   { target: 'avg', candidates: ['AVG'], parse: parseNumber },
   { target: 'obp', candidates: ['OBP'], parse: parseNumber },
@@ -96,7 +124,7 @@ export const COMP_HITTER_COLUMNS: ColumnSpec[] = [
 
 export const COMP_PITCHER_COLUMNS: ColumnSpec[] = [
   { target: 'name', candidates: ['Name'], parse: parseString },
-  { target: 'level', candidates: ['Level', 'Lev'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseLevel },
   { target: 'age', candidates: ['Age'], parse: parseInteger },
   { target: 'era', candidates: ['ERA'], parse: parseNumber },
   { target: 'fip', candidates: ['FIP'], parse: parseNumber },
