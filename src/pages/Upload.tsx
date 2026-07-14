@@ -24,6 +24,10 @@ interface UploadSource {
   supabaseTable: string
   detectTotals?: boolean
   totalsStatKeys?: string[]
+  /** Fangraphs' single-team MLB leaderboards don't include a Level column
+   * at all (every row is obviously MLB) — fill it in ourselves rather than
+   * leaving it null, since the app relies on Level for filtering elsewhere. */
+  defaultLevel?: string
 }
 
 interface UploadGroup {
@@ -63,11 +67,11 @@ const UPLOAD_GROUPS: UploadGroup[] = [
     title: 'MLB Hitters',
     description: 'Atlanta Braves major league hitting leaderboards',
     sources: [
-      { id: 'mlb-hit-standard', label: 'Standard', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=0&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
-      { id: 'mlb-hit-batted', label: 'Batted Ball', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=2&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
-      { id: 'mlb-hit-advanced', label: 'Advanced', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=1&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
-      { id: 'mlb-hit-statcast', label: 'Statcast', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=24&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
-      { id: 'mlb-hit-battrack', label: 'Bat Tracking', supabaseTable: 'hitter_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=80&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
+      { id: 'mlb-hit-standard', label: 'Standard', supabaseTable: 'hitter_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=0&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
+      { id: 'mlb-hit-batted', label: 'Batted Ball', supabaseTable: 'hitter_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=2&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
+      { id: 'mlb-hit-advanced', label: 'Advanced', supabaseTable: 'hitter_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=1&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
+      { id: 'mlb-hit-statcast', label: 'Statcast', supabaseTable: 'hitter_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=24&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
+      { id: 'mlb-hit-battrack', label: 'Bat Tracking', supabaseTable: 'hitter_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=bat&lg=all&type=80&season=2026&season1=2026&ind=0&month=0&qual=0&team=16' },
     ],
   },
   {
@@ -75,19 +79,19 @@ const UPLOAD_GROUPS: UploadGroup[] = [
     title: 'MLB Pitchers',
     description: 'Atlanta Braves major league pitching leaderboards',
     sources: [
-      { id: 'mlb-pit-standard', label: 'Standard', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=0&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-advanced', label: 'Advanced', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=1&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-batted', label: 'Batted Ball', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=2&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-statcast', label: 'Statcast', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=24&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-battrack', label: 'Bat Tracking', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=80&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-pitchpct', label: 'Pitch %', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=9&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-velo', label: 'Pitch Velo', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=10&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-hmove', label: 'H Movement', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=11&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-vmove', label: 'V Movement', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=12&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-spin', label: 'Spin', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=82&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-stuffplus', label: 'Stuff+', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=36&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-locationplus', label: 'Location+', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=37&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
-      { id: 'mlb-pit-pitchingplus', label: 'Pitching+', supabaseTable: 'pitcher_stats', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=38&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-standard', label: 'Standard', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=0&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-advanced', label: 'Advanced', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=1&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-batted', label: 'Batted Ball', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=2&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-statcast', label: 'Statcast', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=24&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-battrack', label: 'Bat Tracking', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=80&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-pitchpct', label: 'Pitch %', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=9&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-velo', label: 'Pitch Velo', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=10&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-hmove', label: 'H Movement', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=11&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-vmove', label: 'V Movement', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=12&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-spin', label: 'Spin', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=82&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-stuffplus', label: 'Stuff+', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=36&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-locationplus', label: 'Location+', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=37&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
+      { id: 'mlb-pit-pitchingplus', label: 'Pitching+', supabaseTable: 'pitcher_stats', defaultLevel: 'MLB', fangraphsUrl: 'https://www.fangraphs.com/leaders/major-league?pos=all&stats=pit&lg=all&type=38&season=2026&season1=2026&ind=0&qual=0&team=16&startdate=&enddate=&month=0' },
     ],
   },
 ]
@@ -553,9 +557,14 @@ function UploadRow({ source }: { source: UploadSource }) {
 
           const columnSpec = source.supabaseTable === 'hitter_stats' ? HITTER_COLUMNS : PITCHER_COLUMNS
           const mappedRows: Record<string, any>[] = rows
-            .map(
-              (r) => ({ ...mapRow(r, columnSpec), is_total: (r as any).is_total ?? false }) as Record<string, any>,
-            )
+            .map((r) => {
+              const mapped = mapRow(r, columnSpec)
+              return {
+                ...mapped,
+                level: mapped.level ?? source.defaultLevel ?? null,
+                is_total: (r as any).is_total ?? false,
+              } as Record<string, any>
+            })
             .filter((r) => r.name)
 
           setRowCount(mappedRows.length)
