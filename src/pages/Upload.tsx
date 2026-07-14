@@ -8,12 +8,14 @@ import {
   Archive,
   Loader2,
   FileText,
+  Users,
 } from 'lucide-react'
 import { supabase, supabaseConfigured } from '@/lib/supabaseClient'
 import { cacheClear } from '@/lib/cache'
 import { tagTotalRows, tagTotalRowsBySeason } from '@/lib/detectTotals'
 import { detectPlayerType, findColumnKey, extractYearFromFilename } from '@/lib/csvUpload'
-import { mapRow, HITTER_COLUMNS, PITCHER_COLUMNS } from '@/lib/columnMapping'
+import { mapRow, HITTER_COLUMNS, PITCHER_COLUMNS, COMP_HITTER_COLUMNS, COMP_PITCHER_COLUMNS } from '@/lib/columnMapping'
+import { slugify } from '@/lib/downloadImage'
 
 interface UploadSource {
   id: string
@@ -110,6 +112,8 @@ export default function Upload() {
       </div>
 
       <MassUploadSection />
+
+      <CompPoolUploadSection />
 
       {UPLOAD_GROUPS.map((group) => (
         <div key={group.id} className="space-y-2.5">
@@ -351,6 +355,179 @@ function FileRow({ file }: { file: FileUploadState }) {
           </span>
         )}
       </span>
+    </div>
+  )
+}
+
+// =====================================================================
+// Comp Pool Upload (Tab 4) — the "notable" MiLB player pool used purely
+// for similarity comps. Deliberately separate from every other table:
+// nothing else in the app reads prospect_comp_pool_hitters/pitchers, so
+// this data will never show up in Players, All-Org Team, or anywhere
+// else — it exists only to be compared against, never displayed as a
+// Braves org player.
+//
+// Same auto-detection as the Historical Archive (type + season/year per
+// file), but maps to a narrower column set (no team, no counting stats —
+// just the rate stats the similarity score in lib/prospectComps.ts uses)
+// and generates a stable player_id client-side by slugifying
+// name+level+years, since Fangraphs exports don't include one. That way
+// re-uploading a different report for the same player merges into their
+// existing row instead of creating a duplicate.
+// =====================================================================
+
+function CompPoolUploadSection() {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [files, setFiles] = useState<FileUploadState[]>([])
+
+  const updateFile = (id: string, patch: Partial<FileUploadState>) => {
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)))
+  }
+
+  const processFile = (file: File, id: string) =>
+    new Promise<void>((resolve) => {
+      updateFile(id, { status: 'parsing' })
+
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: async (results) => {
+          try {
+            const headers = results.meta.fields ?? []
+            const detectedType = detectPlayerType(headers)
+            if (!detectedType) {
+              updateFile(id, { status: 'error', error: "Couldn't tell hitter vs pitcher from the columns in this file." })
+              return
+            }
+
+            let rows = results.data as Record<string, any>[]
+            const seasonKey = findColumnKey(headers, SEASON_COLUMN_CANDIDATES)
+
+            if (seasonKey) {
+              rows = rows.map((r) => ({ ...r, season: Number(r[seasonKey]) || null }))
+            } else {
+              const yearFromName = extractYearFromFilename(file.name)
+              if (!yearFromName) {
+                updateFile(id, {
+                  status: 'error',
+                  detectedType,
+                  error: 'No Season/Year column, and no 4-digit year in the filename. Rename it, e.g. "2019_top_hitters.csv".',
+                })
+                return
+              }
+              rows = rows.map((r) => ({ ...r, season: yearFromName }))
+            }
+
+            rows = rows.filter((r) => r.season != null)
+            const seasons = Array.from(new Set(rows.map((r) => r.season as number))).sort()
+
+            const statKeys = detectedType === 'Hitter' ? HITTER_TOTALS_STAT_KEYS : PITCHER_TOTALS_STAT_KEYS
+            tagTotalRowsBySeason(rows, statKeys, 'season')
+
+            const columnSpec = detectedType === 'Hitter' ? COMP_HITTER_COLUMNS : COMP_PITCHER_COLUMNS
+            const mappedRows: Record<string, any>[] = rows
+              .filter((r) => r.is_total !== false) // one row per player per season — skip level splits, keep the combined line
+              .map((r) => {
+                const mapped = mapRow(r, columnSpec)
+                const years = String(r.season)
+                return {
+                  ...mapped,
+                  years,
+                  player_id: slugify(`${mapped.name ?? 'unknown'}-${years}`),
+                } as Record<string, any>
+              })
+              .filter((r) => r.name)
+
+            const table = detectedType === 'Hitter' ? 'prospect_comp_pool_hitters' : 'prospect_comp_pool_pitchers'
+            updateFile(id, { status: 'uploading', detectedType, seasons, totalRows: mappedRows.length })
+
+            if (supabaseConfigured) {
+              for (let i = 0; i < mappedRows.length; i += BATCH_SIZE) {
+                const batch = mappedRows.slice(i, i + BATCH_SIZE)
+                const { error: upsertError } = await supabase.from(table).upsert(batch, { onConflict: 'player_id' })
+                if (upsertError) throw upsertError
+                updateFile(id, { rowsProcessed: Math.min(i + BATCH_SIZE, mappedRows.length) })
+              }
+            } else {
+              updateFile(id, { rowsProcessed: mappedRows.length })
+            }
+
+            cacheClear()
+            updateFile(id, { status: 'success' })
+          } catch (e: any) {
+            updateFile(id, { status: 'error', error: e.message ?? 'Upload failed' })
+          } finally {
+            resolve()
+          }
+        },
+        error: (err) => {
+          updateFile(id, { status: 'error', error: err.message })
+          resolve()
+        },
+      })
+    })
+
+  const handleFiles = async (fileList: FileList) => {
+    const incoming = Array.from(fileList).map((file) => ({
+      id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file,
+    }))
+    setFiles((prev) => [
+      ...prev,
+      ...incoming.map(({ id, file }) => ({
+        id,
+        fileName: file.name,
+        status: 'parsing' as RowStatus,
+        detectedType: null,
+        seasons: [] as number[],
+        rowsProcessed: 0,
+        totalRows: 0,
+      })),
+    ])
+    for (const { id, file } of incoming) {
+      await processFile(file, id)
+    }
+  }
+
+  return (
+    <div className="card border-l-4 border-brave-gold p-3.5 sm:p-4">
+      <div className="mb-3 flex items-start gap-2.5">
+        <Users size={18} className="mt-0.5 shrink-0 text-brave-gold" />
+        <div>
+          <h3 className="text-sm font-semibold text-navy-950 sm:text-base">
+            Prospect Comp Pool (Tab 4 only)
+          </h3>
+          <p className="text-[11px] text-navy-900/50 sm:text-xs">
+            League-wide "notable" MiLB player exports — not Braves-specific — used only to
+            generate similarity comps on the Prospect Comps tab. This never appears in Players,
+            All-Org Team, or any org-facing view. Drop in Fangraphs leaderboards with the org
+            filter removed, one file per season is fine.
+          </p>
+        </div>
+      </div>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".csv"
+        multiple
+        className="hidden"
+        onChange={(e) => e.target.files && e.target.files.length > 0 && handleFiles(e.target.files)}
+      />
+      <button
+        onClick={() => inputRef.current?.click()}
+        className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-navy-950/15 py-3 text-xs font-medium text-navy-900/60 hover:border-brave-gold hover:text-navy-900"
+      >
+        <UploadCloud size={16} /> Select comp pool CSVs (any number at once)
+      </button>
+
+      {files.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {files.map((f) => (
+            <FileRow key={f.id} file={f} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
