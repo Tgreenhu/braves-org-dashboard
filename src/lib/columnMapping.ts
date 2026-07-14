@@ -1,0 +1,90 @@
+// Maps Fangraphs' raw CSV column headers to our Supabase schema column
+// names, and drops anything we don't recognize (Fangraphs exports include
+// plenty of columns we don't store — 1B, 2B, wSB, etc. — which would
+// otherwise make Supabase reject the whole row with a "could not find
+// column" error).
+//
+// TODO(verify): these candidate header names are Fangraphs' standard
+// column labels, but if your actual export uses different wording for
+// something, add it to that field's candidates array below. Easiest way to
+// check: open one of your CSVs and look at the first row.
+
+export interface ColumnSpec {
+  target: string
+  candidates: string[]
+  parse?: (raw: any) => any
+}
+
+function parseNumber(raw: any): number | null {
+  if (raw === undefined || raw === null || raw === '') return null
+  const cleaned = String(raw).replace('%', '').replace(/,/g, '').trim()
+  const n = Number(cleaned)
+  return Number.isNaN(n) ? null : n
+}
+
+function parseString(raw: any): string | null {
+  if (raw === undefined || raw === null) return null
+  const s = String(raw).trim()
+  return s === '' ? null : s
+}
+
+export const HITTER_COLUMNS: ColumnSpec[] = [
+  { target: 'name', candidates: ['Name'], parse: parseString },
+  { target: 'team', candidates: ['Team'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseString },
+  { target: 'position', candidates: ['Pos', 'Position'], parse: parseString },
+  { target: 'age', candidates: ['Age'], parse: parseNumber },
+  { target: 'bats', candidates: ['Bats', 'B'], parse: parseString },
+  { target: 'g', candidates: ['G'], parse: parseNumber },
+  { target: 'pa', candidates: ['PA'], parse: parseNumber },
+  { target: 'ab', candidates: ['AB'], parse: parseNumber },
+  { target: 'avg', candidates: ['AVG'], parse: parseNumber },
+  { target: 'obp', candidates: ['OBP'], parse: parseNumber },
+  { target: 'slg', candidates: ['SLG'], parse: parseNumber },
+  { target: 'ops', candidates: ['OPS'], parse: parseNumber },
+  { target: 'wrc_plus', candidates: ['wRC+'], parse: parseNumber },
+  { target: 'bb_pct', candidates: ['BB%'], parse: parseNumber },
+  { target: 'k_pct', candidates: ['K%'], parse: parseNumber },
+  { target: 'hr', candidates: ['HR'], parse: parseNumber },
+  { target: 'sb', candidates: ['SB'], parse: parseNumber },
+]
+
+export const PITCHER_COLUMNS: ColumnSpec[] = [
+  { target: 'name', candidates: ['Name'], parse: parseString },
+  { target: 'team', candidates: ['Team'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseString },
+  { target: 'position', candidates: ['Pos', 'Role'], parse: parseString },
+  { target: 'age', candidates: ['Age'], parse: parseNumber },
+  { target: 'throws', candidates: ['Throws', 'T'], parse: parseString },
+  { target: 'g', candidates: ['G'], parse: parseNumber },
+  { target: 'gs', candidates: ['GS'], parse: parseNumber },
+  { target: 'ip', candidates: ['IP'], parse: parseNumber },
+  { target: 'era', candidates: ['ERA'], parse: parseNumber },
+  { target: 'fip', candidates: ['FIP'], parse: parseNumber },
+  { target: 'siera', candidates: ['SIERA'], parse: parseNumber },
+  { target: 'whip', candidates: ['WHIP'], parse: parseNumber },
+  { target: 'k_pct', candidates: ['K%'], parse: parseNumber },
+  { target: 'bb_pct', candidates: ['BB%'], parse: parseNumber },
+  { target: 'kbb_pct', candidates: ['K-BB%', 'K/BB%', 'KBB%'], parse: parseNumber },
+]
+
+/**
+ * Builds a clean row containing ONLY the target schema columns, pulling
+ * each value from whichever of its candidate header names is present in
+ * the source row (case-insensitive). Anything in the source row that
+ * isn't mapped to a target column is simply left out — this is what
+ * prevents "could not find column X" errors from Fangraphs' extra columns.
+ */
+export function mapRow(row: Record<string, any>, columns: ColumnSpec[]): Record<string, any> {
+  const mapped: Record<string, any> = {}
+  const sourceKeys = Object.keys(row)
+  for (const col of columns) {
+    const matchKey = sourceKeys.find((k) =>
+      col.candidates.some((c) => c.trim().toLowerCase() === k.trim().toLowerCase()),
+    )
+    if (matchKey !== undefined) {
+      mapped[col.target] = col.parse ? col.parse(row[matchKey]) : row[matchKey]
+    }
+  }
+  return mapped
+}
