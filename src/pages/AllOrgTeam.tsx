@@ -116,10 +116,10 @@ function SlotRow({ slot }: { slot: OrgTeamSlot }) {
           <div className="shrink-0 text-right text-xs text-navy-900/70">
             {isPitcher(player) ? (
               <span>
-                {player.era.toFixed(2)} ERA / {player.fip.toFixed(2)} FIP
+                {player.era?.toFixed(2) ?? '—'} ERA / {player.fip?.toFixed(2) ?? '—'} FIP
               </span>
             ) : (
-              <span>{player.ops.toFixed(3)} OPS</span>
+              <span>{player.ops?.toFixed(3) ?? '—'} OPS</span>
             )}
             {score !== null && (
               <div className="text-[10px] text-navy-900/40">score {score.toFixed(2)}</div>
