@@ -63,6 +63,7 @@ export interface TeamLevelRecord {
 export interface HitterSeasonStats {
   playerId: string
   name: string
+  season: number // e.g. 2026 — current season, or a past year from the Historical Archive
   level: OrgLevel
   team: string
   position: Position
@@ -86,6 +87,7 @@ export interface HitterSeasonStats {
 export interface PitcherSeasonStats {
   playerId: string
   name: string
+  season: number
   level: OrgLevel
   team: string
   position: 'SP' | 'RP'
