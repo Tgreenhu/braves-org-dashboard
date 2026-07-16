@@ -295,15 +295,20 @@ export async function addWriterExpense(row: { year: number; month: number; categ
 export async function deleteWriterExpense(id: string) {
   return supabase.from('writer_expenses').delete().eq('id', id)
 }
-/** Tab 1: one row per affiliate, sorted MLB → DSL. */
+/**
+ * Tab 1: one row per affiliate, sorted MLB → DSL. Deliberately NOT cached
+ * (unlike most reads here) — this table now updates once a day via the
+ * standings automation running outside the browser (see
+ * scripts/fetch-standings.mjs), so a cached copy would go stale with no
+ * way for the app to know to refresh it. It's only 7 rows, so fetching
+ * fresh every time is cheap.
+ */
 export async function fetchTeamLevelRecords(): Promise<TeamLevelRecord[]> {
   if (!supabaseConfigured) return []
-  return cachedFetch('team_level_records', async () => {
-    const { data, error } = await supabase.from('team_level_records').select('*')
-    if (error || !data) return []
-    const records = data.map(mapTeamRecordRow)
-    return records.sort((a, b) => ORG_LEVELS.indexOf(a.level) - ORG_LEVELS.indexOf(b.level))
-  })
+  const { data, error } = await supabase.from('team_level_records').select('*')
+  if (error || !data) return []
+  const records = data.map(mapTeamRecordRow)
+  return records.sort((a, b) => ORG_LEVELS.indexOf(a.level) - ORG_LEVELS.indexOf(b.level))
 }
 
 /**
