@@ -442,14 +442,11 @@ export async function findDatabaseMatch(name: string): Promise<PoolPlayer | unde
 }
 
 /** Tab 4 eligibility: current-season players with under 162 career MLB games. */
-export async function fetchEligibleProspects(): Promise<{
+export async function fetchEligibleProspects(year: number): Promise<{
   hitters: HitterSeasonStats[]
   pitchers: PitcherSeasonStats[]
 }> {
-  const [hitters, pitchers] = await Promise.all([
-    fetchHitters([CURRENT_SEASON]),
-    fetchPitchers([CURRENT_SEASON]),
-  ])
+  const [hitters, pitchers] = await Promise.all([fetchHitters([year]), fetchPitchers([year])])
   return {
     hitters: hitters.filter((h) => h.mlbGamesCareer < 162),
     pitchers: pitchers.filter((p) => p.mlbGamesCareer < 162),
