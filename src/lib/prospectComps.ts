@@ -1,27 +1,37 @@
-import type { HitterSeasonStats, PitcherSeasonStats, OrgLevel } from '@/types'
+import { ORG_LEVELS, type HitterSeasonStats, type PitcherSeasonStats, type OrgLevel } from '@/types'
 import type { CompPoolHitterRow, CompPoolPitcherRow } from '@/lib/queries'
 
-// Rough level-average ages used to compute an "age relative to level" score
-// — weighted heavily in the similarity math below per the brief, but
-// deliberately NOT one of the 5 displayed radar metrics; it works in the
-// background only.
-export const LEVEL_AVG_AGE: Record<OrgLevel, number> = {
-  MLB: 27.5,
-  AAA: 25.5,
-  AA: 23.5,
-  'A+': 21.5,
-  A: 20.5,
-  FCL: 19,
-  DSL: 18,
+// Age-to-level matching is weighted heavily in the similarity math below,
+// per the brief — but deliberately NOT shown as one of the 5 radar
+// metrics; it works in the background only.
+//
+// This is a DIRECT comparison, not "age relative to that level's average":
+// a 20-year-old in A+ should match against other ~20-year-olds who were
+// ALSO around A+, not just anyone who was similarly young-or-old for
+// wherever they happened to be. Two components:
+//   - raw age difference (smaller = better)
+//   - level difference, using ORG_LEVELS' order as the "distance" between
+//     rungs on the ladder (same level = 0, MLB vs DSL = the max)
+const AGE_WEIGHT = 1.6
+const LEVEL_WEIGHT = 1.6
+const MAX_AGE_GAP_YEARS = 8 // age gaps at or beyond this are treated as "fully different"
+
+function ageDistance(playerAge: number, compAge: number): number {
+  return Math.min(100, (Math.abs(playerAge - compAge) / MAX_AGE_GAP_YEARS) * 100)
 }
 
-const AGE_WEIGHT = 2.5 // deliberately bigger than any single metric weight below
+function levelDistance(playerLevel: OrgLevel, compLevel: OrgLevel): number {
+  const a = ORG_LEVELS.indexOf(playerLevel)
+  const b = ORG_LEVELS.indexOf(compLevel)
+  if (a === -1 || b === -1) return 50
+  return Math.min(100, (Math.abs(a - b) / (ORG_LEVELS.length - 1)) * 100)
+}
 
 interface MetricDef {
   key: string
   label: string
   weight: number
-  invert?: boolean // true when a lower raw value is better (ERA, FIP, WHIP, K%-for-pitchers-against...)
+  invert?: boolean // true when a lower raw value is better (ERA, FIP, WHIP...)
 }
 
 // Every candidate we *could* use, in priority order. Which 5 actually get
@@ -63,10 +73,6 @@ function selectMetrics(pool: Record<string, any>[], candidates: MetricDef[], n =
     .map((s) => s.metric)
 }
 
-function ageToLevelDelta(age: number, level: OrgLevel) {
-  return age - (LEVEL_AVG_AGE[level] ?? 22)
-}
-
 function normalize(value: number, min: number, max: number) {
   if (max === min) return 50
   return Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100))
@@ -94,7 +100,10 @@ export interface ProspectComp {
   blurb: string
 }
 
-function computeComps<TPlayer extends Record<string, any>, TComp extends Record<string, any>>(
+function computeComps<
+  TPlayer extends { age: number; level: OrgLevel } & Record<string, any>,
+  TComp extends { age: number; level: OrgLevel } & Record<string, any>,
+>(
   player: TPlayer,
   pool: TComp[],
   candidates: MetricDef[],
@@ -103,14 +112,6 @@ function computeComps<TPlayer extends Record<string, any>, TComp extends Record<
 ): ProspectComp[] {
   const metrics = selectMetrics(pool, candidates)
 
-  const playerAgeDelta = ageToLevelDelta(player.age, player.level)
-  const ageExtra = pool.map((c) => ageToLevelDelta(c.age, c.level))
-  const [ageMin, ageMax] = (() => {
-    const vals = [playerAgeDelta, ...ageExtra]
-    return [Math.min(...vals), Math.max(...vals)]
-  })()
-  const normPlayerAge = normalize(playerAgeDelta, ageMin, ageMax)
-
   // Precompute each metric's pool-wide range once (not per-comparison) so
   // every player is normalized against the same scale.
   const ranges = new Map<string, [number, number]>()
@@ -118,12 +119,11 @@ function computeComps<TPlayer extends Record<string, any>, TComp extends Record<
     ranges.set(m.key, poolRange(pool, m.key, [player[m.key]]))
   }
 
-  const totalWeight = AGE_WEIGHT + metrics.reduce((sum, m) => sum + m.weight, 0)
+  const totalWeight = AGE_WEIGHT + LEVEL_WEIGHT + metrics.reduce((sum, m) => sum + m.weight, 0)
 
   const scored = pool.map((comp) => {
-    const compAgeDelta = ageToLevelDelta(comp.age, comp.level)
-    const normCompAge = normalize(compAgeDelta, ageMin, ageMax)
-    let weightedDist = AGE_WEIGHT * Math.abs(normPlayerAge - normCompAge)
+    let weightedDist =
+      AGE_WEIGHT * ageDistance(player.age, comp.age) + LEVEL_WEIGHT * levelDistance(player.level, comp.level)
 
     const radar: RadarMetric[] = metrics.map((m) => {
       const [min, max] = ranges.get(m.key)!
@@ -156,7 +156,7 @@ export function getHitterComps(player: HitterSeasonStats, pool: CompPoolHitterRo
     const obp = comp.obp != null ? comp.obp.toFixed(3) : '—'
     const slg = comp.slg != null ? comp.slg.toFixed(3) : '—'
     const wrc = comp.wrcPlus != null ? `${comp.wrcPlus} wRC+` : ''
-    return `${comp.name} (${comp.years}) reached ${comp.level} at age ${comp.age} hitting ${avg}/${obp}/${slg}${wrc ? ` with a ${wrc}` : ''}. ${comp.outcome || 'Career outcome not recorded yet.'} ${p.name} profiles similarly on age-for-level and the metrics that best distinguish this comp pool. [Placeholder blurb — wire a Claude API call in a Supabase Edge Function to generate this dynamically.]`
+    return `${comp.name} (${comp.years}) reached ${comp.level} at age ${comp.age} hitting ${avg}/${obp}/${slg}${wrc ? ` with a ${wrc}` : ''}. ${comp.outcome || 'Career outcome not recorded yet.'} ${p.name} (age ${p.age} in ${p.level}) profiles similarly by age-for-level and the metrics that best distinguish this comp pool. [Placeholder blurb — wire a Claude API call in a Supabase Edge Function to generate this dynamically.]`
   })
 }
 
@@ -165,6 +165,6 @@ export function getPitcherComps(player: PitcherSeasonStats, pool: CompPoolPitche
     const era = comp.era != null ? comp.era.toFixed(2) : '—'
     const fip = comp.fip != null ? comp.fip.toFixed(2) : '—'
     const kbb = comp.kbbPct != null ? `${comp.kbbPct.toFixed(1)}% K-BB` : ''
-    return `${comp.name} (${comp.years}) pitched at ${comp.level} at age ${comp.age} with a ${era} ERA / ${fip} FIP${kbb ? ` and ${kbb}` : ''}. ${comp.outcome || 'Career outcome not recorded yet.'} ${p.name} profiles similarly on age-for-level and the metrics that best distinguish this comp pool. [Placeholder blurb — wire a Claude API call in a Supabase Edge Function to generate this dynamically.]`
+    return `${comp.name} (${comp.years}) pitched at ${comp.level} at age ${comp.age} with a ${era} ERA / ${fip} FIP${kbb ? ` and ${kbb}` : ''}. ${comp.outcome || 'Career outcome not recorded yet.'} ${p.name} (age ${p.age} in ${p.level}) profiles similarly by age-for-level and the metrics that best distinguish this comp pool. [Placeholder blurb — wire a Claude API call in a Supabase Edge Function to generate this dynamically.]`
   })
 }
