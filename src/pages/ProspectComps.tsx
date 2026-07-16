@@ -1,15 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Legend, ResponsiveContainer } from 'recharts'
-import { Loader2, Inbox, Search, X } from 'lucide-react'
+import { Loader2, Inbox, Search, X, ChevronDown } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { fetchEligibleProspects, fetchProspectCompPool, type CompPoolHitterRow, type CompPoolPitcherRow } from '@/lib/queries'
+import { fetchEligibleProspects, fetchProspectCompPool, fetchAvailableSeasons, type CompPoolHitterRow, type CompPoolPitcherRow } from '@/lib/queries'
 import { supabaseConfigured } from '@/lib/supabaseClient'
+import { CURRENT_SEASON } from '@/lib/constants'
 import { getHitterComps, getPitcherComps, type ProspectComp } from '@/lib/prospectComps'
-import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
+import { ORG_LEVELS, type HitterSeasonStats, type PitcherSeasonStats, type OrgLevel } from '@/types'
 
 const MLB_GAMES_ELIGIBILITY_CAP = 162
+const COMP_POOL_LEVEL_OPTIONS = ['Overall', ...ORG_LEVELS] as const
 
 export default function ProspectComps() {
+  const [year, setYear] = useState(CURRENT_SEASON)
+  const [availableYears, setAvailableYears] = useState<number[]>([CURRENT_SEASON])
+  const [prospectLevelFilter, setProspectLevelFilter] = useState<OrgLevel[]>([])
+  const [compPoolLevel, setCompPoolLevel] = useState<(typeof COMP_POOL_LEVEL_OPTIONS)[number]>('Overall')
+
   const [eligibleHitters, setEligibleHitters] = useState<HitterSeasonStats[] | null>(null)
   const [eligiblePitchers, setEligiblePitchers] = useState<PitcherSeasonStats[] | null>(null)
   const [compPoolHitters, setCompPoolHitters] = useState<CompPoolHitterRow[]>([])
@@ -17,19 +24,39 @@ export default function ProspectComps() {
   const [selectedId, setSelectedId] = useState<string>('')
 
   useEffect(() => {
-    fetchEligibleProspects().then(({ hitters, pitchers }) => {
-      setEligibleHitters(hitters)
-      setEligiblePitchers(pitchers)
-      if (hitters.length > 0) setSelectedId(hitters[0].playerId)
-      else if (pitchers.length > 0) setSelectedId(pitchers[0].playerId)
-    })
+    fetchAvailableSeasons().then(setAvailableYears)
     fetchProspectCompPool().then(({ hitters, pitchers }) => {
       setCompPoolHitters(hitters)
       setCompPoolPitchers(pitchers)
     })
   }, [])
 
+  // Refetch the prospect list whenever the year changes — current season
+  // vs. a past year live in different tables (see lib/queries.ts).
+  useEffect(() => {
+    setEligibleHitters(null)
+    setEligiblePitchers(null)
+    fetchEligibleProspects(year).then(({ hitters, pitchers }) => {
+      setEligibleHitters(hitters)
+      setEligiblePitchers(pitchers)
+      setSelectedId((prev) => {
+        const stillValid = hitters.some((h) => h.playerId === prev) || pitchers.some((p) => p.playerId === prev)
+        if (stillValid) return prev
+        return hitters[0]?.playerId ?? pitchers[0]?.playerId ?? ''
+      })
+    })
+  }, [year])
+
   const loading = eligibleHitters === null || eligiblePitchers === null
+
+  const filteredHitters = useMemo(
+    () => (eligibleHitters ?? []).filter((h) => prospectLevelFilter.length === 0 || prospectLevelFilter.includes(h.level)),
+    [eligibleHitters, prospectLevelFilter],
+  )
+  const filteredPitchers = useMemo(
+    () => (eligiblePitchers ?? []).filter((p) => prospectLevelFilter.length === 0 || prospectLevelFilter.includes(p.level)),
+    [eligiblePitchers, prospectLevelFilter],
+  )
 
   const selected = useMemo(() => {
     const h = eligibleHitters?.find((p) => p.playerId === selectedId)
@@ -39,14 +66,26 @@ export default function ProspectComps() {
     return null
   }, [selectedId, eligibleHitters, eligiblePitchers])
 
+  // The comp pool being matched against — filtered to one level, or every
+  // level combined for "Overall" (best matches regardless of level).
+  const scopedCompPoolHitters = useMemo(
+    () => (compPoolLevel === 'Overall' ? compPoolHitters : compPoolHitters.filter((c) => c.level === compPoolLevel)),
+    [compPoolHitters, compPoolLevel],
+  )
+  const scopedCompPoolPitchers = useMemo(
+    () => (compPoolLevel === 'Overall' ? compPoolPitchers : compPoolPitchers.filter((c) => c.level === compPoolLevel)),
+    [compPoolPitchers, compPoolLevel],
+  )
+
   const comps: ProspectComp[] = useMemo(() => {
     if (!selected) return []
     return selected.type === 'Hitter'
-      ? getHitterComps(selected.player as HitterSeasonStats, compPoolHitters)
-      : getPitcherComps(selected.player as PitcherSeasonStats, compPoolPitchers)
-  }, [selected, compPoolHitters, compPoolPitchers])
+      ? getHitterComps(selected.player as HitterSeasonStats, scopedCompPoolHitters)
+      : getPitcherComps(selected.player as PitcherSeasonStats, scopedCompPoolPitchers)
+  }, [selected, scopedCompPoolHitters, scopedCompPoolPitchers])
 
   const hasCompPool = compPoolHitters.length > 0 || compPoolPitchers.length > 0
+  const scopedPoolEmpty = hasCompPool && scopedCompPoolHitters.length === 0 && scopedCompPoolPitchers.length === 0
 
   return (
     <div className="space-y-4">
@@ -54,8 +93,42 @@ export default function ProspectComps() {
         <h2 className="text-lg font-semibold text-navy-900 sm:text-xl">Prospect Comps</h2>
         <p className="text-xs text-navy-900/50 sm:text-sm">
           Players with fewer than {MLB_GAMES_ELIGIBILITY_CAP} career MLB games, matched against a
-          historical MiLB pool by a weighted Similarity Score (age-to-level weighted heaviest).
+          historical MiLB pool by a weighted Similarity Score. Age and level are matched directly
+          against the comp (weighted heavily, not shown as one of the 5 metrics below).
         </p>
+      </div>
+
+      {/* Prospect selection filters */}
+      <div className="card flex flex-wrap items-end gap-3 p-3 sm:p-4">
+        <label className="flex items-center gap-1.5 text-xs text-navy-900/70">
+          Year
+          <select
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className="rounded-lg border border-navy-950/10 px-2 py-1.5 text-xs"
+          >
+            {availableYears.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </label>
+        <MultiSelectFilter label="Prospect Level" options={ORG_LEVELS} selected={prospectLevelFilter} onChange={(v) => setProspectLevelFilter(v as OrgLevel[])} />
+        <label className="flex items-center gap-1.5 text-xs text-navy-900/70">
+          Compare against
+          <select
+            value={compPoolLevel}
+            onChange={(e) => setCompPoolLevel(e.target.value as (typeof COMP_POOL_LEVEL_OPTIONS)[number])}
+            className="rounded-lg border border-navy-950/10 px-2 py-1.5 text-xs"
+          >
+            {COMP_POOL_LEVEL_OPTIONS.map((lvl) => (
+              <option key={lvl} value={lvl}>
+                {lvl}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {loading ? (
@@ -67,10 +140,10 @@ export default function ProspectComps() {
           title="Supabase isn't connected"
           detail="Add your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (see .env.example) to see real prospects here."
         />
-      ) : (eligibleHitters?.length ?? 0) === 0 && (eligiblePitchers?.length ?? 0) === 0 ? (
+      ) : filteredHitters.length === 0 && filteredPitchers.length === 0 ? (
         <EmptyState
-          title="No eligible prospects yet"
-          detail="Upload current-season stats in Tab 6 first — this list is every hitter/pitcher with under 162 career MLB games."
+          title="No eligible prospects match these filters"
+          detail={`No ${year} players under ${MLB_GAMES_ELIGIBILITY_CAP} career MLB games found for the selected level(s). Try clearing the level filter or picking a different year.`}
         />
       ) : (
         <>
@@ -79,18 +152,18 @@ export default function ProspectComps() {
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-navy-900/50">
               Select a prospect
             </label>
-            <ProspectSearch
-              hitters={eligibleHitters ?? []}
-              pitchers={eligiblePitchers ?? []}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-            />
+            <ProspectSearch hitters={filteredHitters} pitchers={filteredPitchers} selectedId={selectedId} onSelect={setSelectedId} />
           </div>
 
           {!hasCompPool ? (
             <EmptyState
               title="No comparison pool uploaded yet"
               detail="Head to the Upload tab's 'Prospect Comp Pool' section and drop in league-wide (non-Braves) MiLB leaderboards to build this out."
+            />
+          ) : scopedPoolEmpty ? (
+            <EmptyState
+              title={`No comp pool players at ${compPoolLevel} yet`}
+              detail="Try 'Overall' or upload comp pool data for this level in the Upload tab."
             />
           ) : (
             selected && (
@@ -180,6 +253,52 @@ function ProspectSearch({
               </span>
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MultiSelectFilter({
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string
+  options: string[]
+  selected: string[]
+  onChange: (v: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const toggle = (opt: string) => {
+    onChange(selected.includes(opt) ? selected.filter((o) => o !== opt) : [...selected, opt])
+  }
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen((o) => !o)} className="pill-button" data-active={selected.length > 0}>
+        {label}
+        {selected.length > 0 && <span className="ml-1 rounded-full bg-white/20 px-1.5 text-[10px]">{selected.length}</span>}
+        <ChevronDown size={12} />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-44 rounded-lg border border-navy-950/10 bg-white p-2 shadow-lg">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-[10px] font-semibold uppercase text-navy-900/40">{label}</span>
+            {selected.length > 0 && (
+              <button onClick={() => onChange([])} className="text-navy-900/40 hover:text-brave-red">
+                <X size={12} />
+              </button>
+            )}
+          </div>
+          <div className="max-h-48 space-y-0.5 overflow-auto">
+            {options.map((opt) => (
+              <label key={opt} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-brave-cream">
+                <input type="checkbox" checked={selected.includes(opt)} onChange={() => toggle(opt)} className="accent-brave-red" />
+                {opt}
+              </label>
+            ))}
+          </div>
         </div>
       )}
     </div>
