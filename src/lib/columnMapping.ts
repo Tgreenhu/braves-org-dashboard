@@ -58,6 +58,8 @@ const LEVEL_ALIASES: Record<string, string> = {
   'SINGLE-A': 'A',
   FCL: 'FCL',
   GCL: 'FCL', // Florida Complex League's old name
+  CPX: 'FCL', // generic "complex league" label some reports use
+  ACL: 'FCL',
   DSL: 'DSL',
 }
 
@@ -71,7 +73,7 @@ export const HITTER_COLUMNS: ColumnSpec[] = [
   { target: 'name', candidates: ['Name'], parse: parseString },
   { target: 'team', candidates: ['Team'], parse: parseString },
   { target: 'level', candidates: ['Level', 'Lev'], parse: parseLevel },
-  { target: 'position', candidates: ['Pos', 'Position'], parse: parseString },
+  { target: 'position', candidates: ['Pos', 'Position', 'Position(s)', 'Primary Position', 'Primary Pos'], parse: parseString },
   { target: 'age', candidates: ['Age'], parse: parseInteger },
   { target: 'bats', candidates: ['Bats', 'B'], parse: parseString },
   { target: 'g', candidates: ['G'], parse: parseInteger },
@@ -115,7 +117,7 @@ export const PITCHER_COLUMNS: ColumnSpec[] = [
   { target: 'name', candidates: ['Name'], parse: parseString },
   { target: 'team', candidates: ['Team'], parse: parseString },
   { target: 'level', candidates: ['Level', 'Lev'], parse: parseLevel },
-  { target: 'position', candidates: ['Pos', 'Role'], parse: parseString },
+  { target: 'position', candidates: ['Pos', 'Role', 'Position', 'Position(s)'], parse: parseString },
   { target: 'age', candidates: ['Age'], parse: parseInteger },
   { target: 'throws', candidates: ['Throws', 'T'], parse: parseString },
   { target: 'g', candidates: ['G'], parse: parseInteger },

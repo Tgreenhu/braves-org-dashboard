@@ -17,6 +17,7 @@ import { ORG_LEVELS } from '@/types'
 
 function mapHitterRow(row: Record<string, any>): HitterSeasonStats {
   return {
+    dbId: row.id,
     playerId: row.player_id ?? row.id,
     name: row.name,
     season: row.season ?? CURRENT_SEASON,
@@ -38,6 +39,7 @@ function mapHitterRow(row: Record<string, any>): HitterSeasonStats {
     hr: row.hr,
     sb: row.sb,
     mlbGamesCareer: row.mlb_games_career ?? 0, // not tracked in historical_hitter_stats
+    isTotal: row.is_total ?? true,
     gbPct: row.gb_pct,
     fbPct: row.fb_pct,
     ldPct: row.ld_pct,
@@ -63,6 +65,7 @@ function mapHitterRow(row: Record<string, any>): HitterSeasonStats {
 
 function mapPitcherRow(row: Record<string, any>): PitcherSeasonStats {
   return {
+    dbId: row.id,
     playerId: row.player_id ?? row.id,
     name: row.name,
     season: row.season ?? CURRENT_SEASON,
@@ -82,6 +85,7 @@ function mapPitcherRow(row: Record<string, any>): PitcherSeasonStats {
     bbPct: row.bb_pct,
     kbbPct: row.kbb_pct,
     mlbGamesCareer: row.mlb_games_career ?? 0,
+    isTotal: row.is_total ?? true,
     gbPct: row.gb_pct,
     fbPct: row.fb_pct,
     ldPct: row.ld_pct,
@@ -295,6 +299,14 @@ export async function addWriterExpense(row: { year: number; month: number; categ
 export async function deleteWriterExpense(id: string) {
   return supabase.from('writer_expenses').delete().eq('id', id)
 }
+/** Tab 2 inline position edit — saves permanently to hitter_stats/pitcher_stats. Only supported for current-season rows. */
+export async function updateHitterPosition(dbId: string, position: string) {
+  return supabase.from('hitter_stats').update({ position }).eq('id', dbId)
+}
+export async function updatePitcherPosition(dbId: string, position: string) {
+  return supabase.from('pitcher_stats').update({ position }).eq('id', dbId)
+}
+
 /**
  * Tab 1: one row per affiliate, sorted MLB → DSL. Deliberately NOT cached
  * (unlike most reads here) — this table now updates once a day via the
@@ -394,7 +406,12 @@ export async function fetchAvailableSeasons(): Promise<number[]> {
   })
 }
 
-/** Tab 5 "Add from database": current-season players only. */
+/**
+ * Tab 5 "Add from database": current-season players only, ONE row per
+ * player — the combined/total line if they played multiple levels this
+ * season, or their only row if they didn't. Includes the stat line shown
+ * next to each name in the Top 30 list.
+ */
 export interface PoolPlayer {
   playerId: string
   name: string
@@ -403,14 +420,56 @@ export interface PoolPlayer {
   level: OrgLevel
   team: string
   playerType: 'Hitter' | 'Pitcher'
+  // Hitters
+  avg?: number
+  ops?: number
+  wrcPlus?: number
+  bbPct?: number
+  kPct?: number
+  // Pitchers
+  throws?: string
+  era?: number
+  fip?: number
+  siera?: number
+  kbbPct?: number
+}
+
+/**
+ * Collapses possibly-multiple rows per player down to one: prefer the row
+ * marked is_total (the combined season line), and if a legacy/edge-case
+ * player has no row flagged that way, fall back to whichever row has the
+ * most playing time (PA or IP) as the best stand-in for "their season."
+ */
+function dedupeToOneRowPerPlayer<T extends { name: string; isTotal: boolean }>(
+  rows: T[],
+  volumeKey: 'pa' | 'ip',
+): T[] {
+  const byName = new Map<string, T[]>()
+  for (const row of rows) {
+    const key = row.name.trim().toLowerCase()
+    if (!byName.has(key)) byName.set(key, [])
+    byName.get(key)!.push(row)
+  }
+  const result: T[] = []
+  for (const group of byName.values()) {
+    const total = group.find((r) => r.isTotal)
+    if (total) {
+      result.push(total)
+    } else {
+      result.push([...group].sort((a: any, b: any) => (b[volumeKey] ?? 0) - (a[volumeKey] ?? 0))[0])
+    }
+  }
+  return result
 }
 
 export async function fetchCombinedPlayerPool(): Promise<PoolPlayer[]> {
   if (!supabaseConfigured) return []
-  const [hitters, pitchers] = await Promise.all([
+  const [hittersRaw, pitchersRaw] = await Promise.all([
     fetchHitters([CURRENT_SEASON]),
     fetchPitchers([CURRENT_SEASON]),
   ])
+  const hitters = dedupeToOneRowPerPlayer(hittersRaw, 'pa')
+  const pitchers = dedupeToOneRowPerPlayer(pitchersRaw, 'ip')
   return [
     ...hitters.map((h) => ({
       playerId: h.playerId,
@@ -420,6 +479,11 @@ export async function fetchCombinedPlayerPool(): Promise<PoolPlayer[]> {
       level: h.level,
       team: h.team,
       playerType: 'Hitter' as const,
+      avg: h.avg,
+      ops: h.ops,
+      wrcPlus: h.wrcPlus,
+      bbPct: h.bbPct,
+      kPct: h.kPct,
     })),
     ...pitchers.map((p) => ({
       playerId: p.playerId,
@@ -429,6 +493,11 @@ export async function fetchCombinedPlayerPool(): Promise<PoolPlayer[]> {
       level: p.level,
       team: p.team,
       playerType: 'Pitcher' as const,
+      throws: p.throws,
+      era: p.era,
+      fip: p.fip,
+      siera: p.siera,
+      kbbPct: p.kbbPct,
     })),
   ]
 }

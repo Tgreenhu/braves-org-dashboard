@@ -1,8 +1,9 @@
 import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
 import { scoreHitters, scorePitchers, type ScoredPlayer } from '@/lib/scoring'
 
-const INFIELD_POS = new Set(['1B', '2B', '3B', 'SS', 'IF'])
-const OUTFIELD_POS = new Set(['LF', 'CF', 'RF', 'OF'])
+const INFIELD_POS = new Set(['1B', '2B', '3B', 'SS', 'IF', 'FIRST', 'SECOND', 'THIRD', 'SHORTSTOP', '3', '4', '5', '6'])
+const OUTFIELD_POS = new Set(['LF', 'CF', 'RF', 'OF', 'LEFT', 'CENTER', 'RIGHT', 'OUTFIELD', '7', '8', '9'])
+const CATCHER_POS = new Set(['C', 'CATCHER', '2'])
 
 /**
  * Fangraphs' Pos column isn't always a single clean value — multi-position
@@ -10,7 +11,7 @@ const OUTFIELD_POS = new Set(['LF', 'CF', 'RF', 'OF'])
  * stray whitespace. Take just the primary (first-listed) position and
  * normalize it so IF/OF/C matching actually works against real data.
  */
-function primaryPosition(position: string | null | undefined): string {
+export function primaryPosition(position: string | null | undefined): string {
   if (!position) return ''
   return position.split(/[\/,]/)[0].trim().toUpperCase()
 }
@@ -64,7 +65,7 @@ export function buildAllOrgTeams(
       const pick = takeNext(scoredHitters, (h) => OUTFIELD_POS.has(primaryPosition(h.position)))
       outfielders.push({ slotLabel: 'OF', player: pick?.player ?? null, score: pick?.score ?? null })
     }
-    const cPick = takeNext(scoredHitters, (h) => primaryPosition(h.position) === 'C')
+    const cPick = takeNext(scoredHitters, (h) => CATCHER_POS.has(primaryPosition(h.position)))
     const catcher: OrgTeamSlot = { slotLabel: 'C', player: cPick?.player ?? null, score: cPick?.score ?? null }
 
     // DH = next best remaining position player, any position
