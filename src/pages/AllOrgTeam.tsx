@@ -4,7 +4,7 @@ import DownloadableCard from '@/components/shared/DownloadableCard'
 import { fetchHitters, fetchPitchers, fetchTeamGamesByLevel } from '@/lib/queries'
 import { supabaseConfigured } from '@/lib/supabaseClient'
 import { CURRENT_SEASON } from '@/lib/constants'
-import { buildAllOrgTeams, primaryPosition, type OrgTeam, type OrgTeamSlot } from '@/lib/allOrgTeam'
+import { buildAllOrgTeams, primaryPosition, OUTFIELD_POS, type OrgTeam, type OrgTeamSlot } from '@/lib/allOrgTeam'
 import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
 
 const TEAM_LABEL = { 1: 'First Team', 2: 'Second Team', 3: 'Third Team' } as const
@@ -18,6 +18,13 @@ export default function AllOrgTeam() {
   const [teams, setTeams] = useState<OrgTeam[] | null>(null)
   const [hasAnyData, setHasAnyData] = useState(false)
   const [sampleHitters, setSampleHitters] = useState<HitterSeasonStats[]>([])
+  const [poolStats, setPoolStats] = useState<{
+    totalHitters: number
+    qualifiedHitters: number
+    qualifiedOF: number
+    totalPitchers: number
+    qualifiedPitchers: number
+  } | null>(null)
 
   useEffect(() => {
     Promise.all([fetchHitters([CURRENT_SEASON]), fetchPitchers([CURRENT_SEASON]), fetchTeamGamesByLevel()]).then(
@@ -28,6 +35,9 @@ export default function AllOrgTeam() {
         // Qualified only — 3.1 PA per scheduled team game for hitters, 1.0
         // IP per scheduled team game for pitchers, to keep tiny-sample
         // outliers (a September call-up with 4 PA, e.g.) out of the running.
+        // Note: the 1.0 IP/game bar is the same one MLB uses for its ERA
+        // qualifiers, which in practice mostly selects full-time starters —
+        // it's normal and expected for this to exclude most relievers.
         const qualifiedHitters = hitters.filter((h) => {
           const teamGames = teamGamesByLevel[h.level] ?? 130
           return h.pa >= 3.1 * teamGames
@@ -35,6 +45,14 @@ export default function AllOrgTeam() {
         const qualifiedPitchers = pitchers.filter((p) => {
           const teamGames = teamGamesByLevel[p.level] ?? 130
           return p.ip >= 1.0 * teamGames
+        })
+
+        setPoolStats({
+          totalHitters: hitters.length,
+          qualifiedHitters: qualifiedHitters.length,
+          qualifiedOF: qualifiedHitters.filter((h) => OUTFIELD_POS.has(primaryPosition(h.position))).length,
+          totalPitchers: pitchers.length,
+          qualifiedPitchers: qualifiedPitchers.length,
         })
 
         setTeams(buildAllOrgTeams(qualifiedHitters, qualifiedPitchers))
@@ -61,6 +79,23 @@ export default function AllOrgTeam() {
           <code>src/lib/scoring.ts</code> for the exact weighting.
         </p>
       </div>
+
+      {poolStats && hasAnyData && (
+        <div className="card p-3 text-xs sm:p-4">
+          <p className="mb-1.5 font-semibold text-navy-950">Qualified pool sizes (org-wide, all levels combined)</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-navy-900/70 sm:grid-cols-4">
+            <span>Hitters: {poolStats.qualifiedHitters} / {poolStats.totalHitters} qualified</span>
+            <span>— of which OF-eligible: {poolStats.qualifiedOF}</span>
+            <span>Pitchers: {poolStats.qualifiedPitchers} / {poolStats.totalPitchers} qualified</span>
+            <span className="text-navy-900/40">(9 OF / 15 pitcher slots needed for 3 full teams)</span>
+          </div>
+          <p className="mt-1.5 text-navy-900/40">
+            The 1.0 IP/team-game bar is MLB's own ERA-qualifier standard, which in practice mostly
+            selects full-time starters — a thin qualified pitcher pool here usually means your org
+            doesn't have enough qualifying starters yet this season, not a bug.
+          </p>
+        </div>
+      )}
 
       {allPositionSlotsEmpty && (
         <div className="card border-l-4 border-brave-gold p-3 text-xs sm:p-4">
