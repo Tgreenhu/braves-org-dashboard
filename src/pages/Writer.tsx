@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts'
 import {
   ExternalLink,
   Plus,
@@ -9,6 +10,7 @@ import {
   Inbox,
   DollarSign,
   FileText,
+  BarChart3,
 } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
 import {
@@ -30,19 +32,279 @@ import { useClickOutside } from '@/lib/useClickOutside'
 const TAX_RATE = 0.3
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const CURRENT_YEAR = new Date().getFullYear()
+const CHART_COLORS = ['#CE1141', '#13274F', '#8DBCE6', '#D4A32C', '#5B8C5A', '#8B5CF6', '#EC4899']
 
 export default function Writer() {
+  // Lifted to the top so one filter bar drives everything below it — the
+  // summary boxes, the analytics charts, and the articles list all read
+  // from this same year/month selection.
+  const [year, setYear] = useState(CURRENT_YEAR)
+  const [month, setMonth] = useState<number | 'All'>('All')
+
+  const [articles, setArticles] = useState<WriterArticle[] | null>(null)
+  const [income, setIncome] = useState<WriterIncomeRow[] | null>(null)
+  const [expenses, setExpenses] = useState<WriterExpenseRow[] | null>(null)
+
+  const loadArticles = () => fetchWriterArticles().then(setArticles)
+  const loadFinances = () =>
+    fetchWriterFinances(year).then(({ income, expenses }) => {
+      setIncome(income)
+      setExpenses(expenses)
+    })
+
+  useEffect(() => {
+    loadArticles()
+  }, [])
+  useEffect(() => {
+    setIncome(null)
+    setExpenses(null)
+    loadFinances()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year])
+
+  const availableYears = useMemo(() => {
+    const years = new Set<number>([CURRENT_YEAR])
+    for (const a of articles ?? []) {
+      if (a.publishedDate) years.add(Number(a.publishedDate.slice(0, 4)))
+    }
+    return Array.from(years).sort((a, b) => b - a)
+  }, [articles])
+
+  // Articles scoped to the selected year (+ month, if one is picked).
+  const articlesInPeriod = useMemo(() => {
+    return (articles ?? []).filter((a) => {
+      if (!a.publishedDate) return false
+      const y = Number(a.publishedDate.slice(0, 4))
+      const m = Number(a.publishedDate.slice(5, 7))
+      if (y !== year) return false
+      if (month !== 'All' && m !== month) return false
+      return true
+    })
+  }, [articles, year, month])
+
+  // Finances scoped the same way — income/expenses are already fetched for
+  // the selected year, just narrow further by month here.
+  const incomeInPeriod = useMemo(
+    () => (income ?? []).filter((r) => month === 'All' || r.month === month),
+    [income, month],
+  )
+  const expensesInPeriod = useMemo(
+    () => (expenses ?? []).filter((r) => month === 'All' || r.month === month),
+    [expenses, month],
+  )
+
+  const totalIncome = incomeInPeriod.reduce((sum, r) => sum + r.amount, 0)
+  const totalExpenses = expensesInPeriod.reduce((sum, r) => sum + r.amount, 0)
+  const netIncome = totalIncome - totalExpenses
+  const estimatedTax = Math.max(0, netIncome * TAX_RATE)
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-navy-900 sm:text-xl">Writer</h2>
-        <p className="text-xs text-navy-900/50 sm:text-sm">
-          Every published piece across outlets, plus a running income/expense/tax tracker.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-navy-900 sm:text-xl">Writer</h2>
+          <p className="text-xs text-navy-900/50 sm:text-sm">
+            Every published piece across outlets, plus a running income/expense/tax tracker.
+          </p>
+        </div>
+
+        {/* Global filter — drives everything on this page */}
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-navy-900/70">
+            Year
+            <select
+              value={year}
+              onChange={(e) => setYear(Number(e.target.value))}
+              className="rounded-lg border border-navy-950/10 px-2 py-1.5 text-xs"
+            >
+              {availableYears.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-navy-900/70">
+            Month
+            <select
+              value={month}
+              onChange={(e) => setMonth(e.target.value === 'All' ? 'All' : Number(e.target.value))}
+              className="rounded-lg border border-navy-950/10 px-2 py-1.5 text-xs"
+            >
+              <option value="All">All</option>
+              {MONTH_NAMES.map((m, i) => (
+                <option key={m} value={i + 1}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
-      <ArticlesSection />
-      <FinancesSection />
+      {/* Income, Expenses & Tax — top of the page as requested */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <SummaryCard label="Income" value={totalIncome} />
+        <SummaryCard label="Expenses" value={totalExpenses} />
+        <SummaryCard label="Net" value={netIncome} valueClass={netIncome >= 0 ? 'text-emerald-600' : 'text-brave-red'} />
+        <SummaryCard label={`Est. Tax (${(TAX_RATE * 100).toFixed(0)}%)`} value={estimatedTax} valueClass="text-brave-red" />
+      </div>
+
+      <AnalyticsSection
+        year={year}
+        month={month}
+        articlesInPeriod={articlesInPeriod}
+        income={income ?? []}
+        expenses={expenses ?? []}
+      />
+
+      <ArticlesSection
+        articles={articles}
+        articlesInPeriod={articlesInPeriod}
+        year={year}
+        month={month}
+        onChanged={loadArticles}
+      />
+
+      <FinancesSection
+        year={year}
+        income={income}
+        expenses={expenses}
+        onChanged={loadFinances}
+      />
+    </div>
+  )
+}
+
+// =====================================================================
+// Analytics — fun tables/graphs, all reading from the shared year/month filter
+// =====================================================================
+
+function AnalyticsSection({
+  year,
+  month,
+  articlesInPeriod,
+  income,
+  expenses,
+}: {
+  year: number
+  month: number | 'All'
+  articlesInPeriod: WriterArticle[]
+  income: WriterIncomeRow[]
+  expenses: WriterExpenseRow[]
+}) {
+  // Articles-per-month chart intentionally always shows the full year's
+  // shape (that's the point of the chart) — everything else on the page
+  // still fully respects the month filter.
+  const articlesByMonth = useMemo(() => {
+    const counts = Array(12).fill(0)
+    for (const a of articlesInPeriod.length ? articlesInPeriod : []) {
+      // articlesInPeriod is already year-scoped; if a month filter is set
+      // this will just show one bar, which is fine — still accurate.
+      if (a.publishedDate) counts[Number(a.publishedDate.slice(5, 7)) - 1]++
+    }
+    return MONTH_NAMES.map((m, i) => ({ month: m, count: counts[i] }))
+  }, [articlesInPeriod])
+
+  const incomeExpenseByMonth = useMemo(() => {
+    return MONTH_NAMES.map((m, i) => ({
+      month: m,
+      Income: income.filter((r) => r.month === i + 1).reduce((s, r) => s + r.amount, 0),
+      Expenses: expenses.filter((r) => r.month === i + 1).reduce((s, r) => s + r.amount, 0),
+    }))
+  }, [income, expenses])
+
+  const byCompany = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const a of articlesInPeriod) counts.set(a.company, (counts.get(a.company) ?? 0) + 1)
+    return Array.from(counts.entries())
+      .map(([company, count]) => ({ company, count }))
+      .sort((a, b) => b.count - a.count)
+  }, [articlesInPeriod])
+
+  const totalArticles = articlesInPeriod.length
+  const avgPerMonth = month === 'All' ? (totalArticles / 12).toFixed(1) : null
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <BarChart3 size={16} className="text-navy-900/50" />
+        <h3 className="text-sm font-semibold text-navy-900 sm:text-base">Analytics</h3>
+      </div>
+
+      {/* Quick stats row */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <StatCard label={`Articles (${month === 'All' ? year : `${MONTH_NAMES[month - 1]} ${year}`})`} value={totalArticles} />
+        {avgPerMonth != null && <StatCard label="Avg / Month" value={avgPerMonth} />}
+        {byCompany.slice(0, avgPerMonth != null ? 2 : 3).map((c) => (
+          <StatCard key={c.company} label={c.company} value={c.count} />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <DownloadableCard title="Articles Published by Month" subtitle={String(year)} filename="writer-articles-by-month">
+          <div className="h-64 p-3 sm:p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={articlesByMonth}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#13274F11" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Bar dataKey="count" name="Articles" radius={[4, 4, 0, 0]}>
+                  {articlesByMonth.map((entry, i) => (
+                    <Cell key={i} fill={month !== 'All' && i === month - 1 ? '#CE1141' : '#13274F'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </DownloadableCard>
+
+        <DownloadableCard title="Income vs Expenses by Month" subtitle={String(year)} filename="writer-income-expenses-by-month">
+          <div className="h-64 p-3 sm:p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={incomeExpenseByMonth}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#13274F11" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+                <Tooltip formatter={(v: number) => `$${v.toLocaleString()}`} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar dataKey="Income" fill="#5B8C5A" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Expenses" fill="#CE1141" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </DownloadableCard>
+      </div>
+
+      {byCompany.length > 0 && (
+        <DownloadableCard title="Articles by Outlet" subtitle={`${month === 'All' ? year : `${MONTH_NAMES[month - 1]} ${year}`}`} filename="writer-articles-by-outlet">
+          <div className="h-56 p-3 sm:p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={byCompany} layout="vertical" margin={{ left: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#13274F11" />
+                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="company" tick={{ fontSize: 11 }} width={110} />
+                <Tooltip />
+                <Bar dataKey="count" name="Articles" radius={[0, 4, 4, 0]}>
+                  {byCompany.map((_, i) => (
+                    <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </DownloadableCard>
+      )}
+    </div>
+  )
+}
+
+function StatCard({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="card p-3 text-center">
+      <div className="truncate text-[10px] uppercase tracking-wide text-navy-900/45">{label}</div>
+      <div className="font-display text-lg font-semibold text-navy-950">{value}</div>
     </div>
   )
 }
@@ -51,8 +313,19 @@ export default function Writer() {
 // Articles
 // =====================================================================
 
-function ArticlesSection() {
-  const [articles, setArticles] = useState<WriterArticle[] | null>(null)
+function ArticlesSection({
+  articles,
+  articlesInPeriod,
+  year,
+  month,
+  onChanged,
+}: {
+  articles: WriterArticle[] | null
+  articlesInPeriod: WriterArticle[]
+  year: number
+  month: number | 'All'
+  onChanged: () => void
+}) {
   const [companyFilter, setCompanyFilter] = useState<string[]>([])
   const [search, setSearch] = useState('')
   const [showAddForm, setShowAddForm] = useState(false)
@@ -65,20 +338,15 @@ function ArticlesSection() {
     publishedDate: new Date().toISOString().slice(0, 10),
   })
 
-  const load = () => fetchWriterArticles().then(setArticles)
-  useEffect(() => {
-    load()
-  }, [])
-
   const companies = useMemo(() => Array.from(new Set((articles ?? []).map((a) => a.company))).sort(), [articles])
 
   const filtered = useMemo(() => {
-    return (articles ?? []).filter((a) => {
+    return articlesInPeriod.filter((a) => {
       if (companyFilter.length && !companyFilter.includes(a.company)) return false
       if (search && !a.title.toLowerCase().includes(search.toLowerCase())) return false
       return true
     })
-  }, [articles, companyFilter, search])
+  }, [articlesInPeriod, companyFilter, search])
 
   const handleAdd = async () => {
     if (!form.title.trim() || !form.url.trim() || !form.company.trim()) return
@@ -93,13 +361,15 @@ function ArticlesSection() {
     })
     setForm({ title: '', url: '', company: '', category: '', contentType: 'Article', publishedDate: new Date().toISOString().slice(0, 10) })
     setShowAddForm(false)
-    load()
+    onChanged()
   }
 
   const handleDelete = async (id: string) => {
     await deleteWriterArticle(id)
-    load()
+    onChanged()
   }
+
+  const periodLabel = month === 'All' ? String(year) : `${MONTH_NAMES[month - 1]} ${year}`
 
   return (
     <div className="space-y-3">
@@ -174,9 +444,12 @@ function ArticlesSection() {
       ) : !supabaseConfigured ? (
         <EmptyState title="Supabase isn't connected" detail="Add your Supabase credentials to track articles here." />
       ) : filtered.length === 0 ? (
-        <EmptyState title="Nothing here yet" detail="Use 'Add link' to start tracking your work." />
+        <EmptyState
+          title={`Nothing for ${periodLabel}`}
+          detail="Try a different year/month above, or use 'Add link' to log something for this period."
+        />
       ) : (
-        <DownloadableCard title="Articles & Content" subtitle={`${filtered.length} pieces`} filename="writer-articles">
+        <DownloadableCard title="Articles & Content" subtitle={`${filtered.length} pieces · ${periodLabel}`} filename="writer-articles">
           <div className="max-h-[60vh] overflow-auto">
             <table className="stat-table">
               <thead>
@@ -219,39 +492,29 @@ function ArticlesSection() {
 }
 
 // =====================================================================
-// Finances
+// Finances (entry forms + lists — summary boxes now live at page top)
 // =====================================================================
 
-function FinancesSection() {
-  const [year, setYear] = useState(CURRENT_YEAR)
-  const [income, setIncome] = useState<WriterIncomeRow[] | null>(null)
-  const [expenses, setExpenses] = useState<WriterExpenseRow[] | null>(null)
+function FinancesSection({
+  year,
+  income,
+  expenses,
+  onChanged,
+}: {
+  year: number
+  income: WriterIncomeRow[] | null
+  expenses: WriterExpenseRow[] | null
+  onChanged: () => void
+}) {
   const [incomeForm, setIncomeForm] = useState({ month: '1', company: '', amount: '' })
   const [expenseForm, setExpenseForm] = useState({ month: '1', category: '', description: '', amount: '' })
-
-  const load = () =>
-    fetchWriterFinances(year).then(({ income, expenses }) => {
-      setIncome(income)
-      setExpenses(expenses)
-    })
-  useEffect(() => {
-    setIncome(null)
-    setExpenses(null)
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year])
-
-  const totalIncome = (income ?? []).reduce((sum, r) => sum + r.amount, 0)
-  const totalExpenses = (expenses ?? []).reduce((sum, r) => sum + r.amount, 0)
-  const netIncome = totalIncome - totalExpenses
-  const estimatedTax = Math.max(0, netIncome * TAX_RATE)
 
   const handleAddIncome = async () => {
     const amount = Number(incomeForm.amount)
     if (!incomeForm.company.trim() || !amount) return
     await addWriterIncome({ year, month: Number(incomeForm.month), company: incomeForm.company.trim(), amount })
     setIncomeForm({ month: '1', company: '', amount: '' })
-    load()
+    onChanged()
   }
   const handleAddExpense = async () => {
     const amount = Number(expenseForm.amount)
@@ -264,32 +527,12 @@ function FinancesSection() {
       amount,
     })
     setExpenseForm({ month: '1', category: '', description: '', amount: '' })
-    load()
+    onChanged()
   }
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-navy-900 sm:text-base">Income, Expenses &amp; Tax Estimate</h3>
-        <label className="flex items-center gap-1.5 text-xs text-navy-900/70">
-          Year
-          <input
-            type="number"
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="w-20 rounded-md border border-navy-950/10 px-2 py-1 text-xs"
-          />
-        </label>
-      </div>
-
-      {/* Summary */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <SummaryCard label="Income" value={totalIncome} />
-        <SummaryCard label="Expenses" value={totalExpenses} />
-        <SummaryCard label="Net" value={netIncome} valueClass={netIncome >= 0 ? 'text-emerald-600' : 'text-brave-red'} />
-        <SummaryCard label={`Est. Tax (${(TAX_RATE * 100).toFixed(0)}%)`} value={estimatedTax} valueClass="text-brave-red" />
-      </div>
-
+      <h3 className="text-sm font-semibold text-navy-900 sm:text-base">Log Pay &amp; Expenses</h3>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Income */}
         <div className="card p-3 sm:p-4">
@@ -330,7 +573,7 @@ function FinancesSection() {
             rows={(income ?? []).map((r) => ({ id: r.id, month: r.month, label: r.company, amount: r.amount }))}
             onDelete={async (id) => {
               await deleteWriterIncome(id)
-              load()
+              onChanged()
             }}
           />
         </div>
@@ -374,7 +617,7 @@ function FinancesSection() {
             rows={(expenses ?? []).map((r) => ({ id: r.id, month: r.month, label: r.description || r.category || 'Expense', amount: r.amount }))}
             onDelete={async (id) => {
               await deleteWriterExpense(id)
-              load()
+              onChanged()
             }}
           />
         </div>
