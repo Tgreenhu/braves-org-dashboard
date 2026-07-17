@@ -9,23 +9,27 @@ import { LEVEL_FACTOR, LEVEL_AVG_AGE } from '@/lib/levelBaselines'
  * let a mediocre-but-young MLB player outscore genuinely good performers
  * purely on youth — these values were recalibrated after seeing that.)
  */
-export const LEVEL_WEIGHT = 0.3 // multiplies LEVEL_FACTOR (0-1) — full MLB-to-DSL gap ≈ 0.23
-export const AGE_WEIGHT = 0.03 // multiplied by years young/old for level, capped below
+export const LEVEL_WEIGHT = 0.38 // multiplies LEVEL_FACTOR (0-1) — full MLB-to-DSL gap ≈ 0.29
+export const AGE_WEIGHT = 0.045 // multiplied by years young/old for level, capped below
 const MAX_AGE_BONUS = 0.3 // no single relative-age gap (however extreme) can swing more than this
 
 /**
  * Separate from the relative "young/old for level" bonus above — this
  * rewards being notably young in ABSOLUTE terms (not just relative to
- * level peers), so a 16-year-old standout in the DSL can still outrank an
- * older, higher-level player with similar-but-slightly-better numbers
- * (e.g. a 27-year-old in AAA). Zero for anyone 20 or older, so it never
- * touches typical MLB/AAA/AA comparisons — those are decided by level and
- * performance as normal. Capped so it can tip a close call, not flood the
- * rankings with every complex-leaguer regardless of performance.
+ * level peers), so a real standout in the low minors (think a 16-year-old
+ * in the DSL) can still outrank an older, higher-level player with
+ * similar-but-slightly-better numbers. Zero for anyone 20 or older, so it
+ * never touches typical MLB/AAA/AA comparisons.
+ *
+ * Scales with the SQUARE of years under the threshold (not linearly) on
+ * purpose: a 17-year-old should barely register (9 * weight), while a
+ * 16-year-old registers noticeably more (16 * weight) — a linear version
+ * gave nearly as much credit to "slightly young" as to "startlingly
+ * young," which wasn't the intent.
  */
 const ABSOLUTE_YOUTH_THRESHOLD = 20
-const ABSOLUTE_YOUTH_WEIGHT = 0.12 // per year under the threshold
-const MAX_ABSOLUTE_YOUTH_BONUS = 0.6
+const ABSOLUTE_YOUTH_WEIGHT = 0.012 // per (year under threshold)²
+const MAX_ABSOLUTE_YOUTH_BONUS = 0.4
 
 /**
  * Composite Hitter Score (0-100ish scale, uncapped) used to rank position
@@ -103,10 +107,8 @@ function levelAgeBonus(level: HitterSeasonStats['level'], age: number): number {
   const ageDelta = age - (LEVEL_AVG_AGE[level] ?? 22) // positive = older than typical for level
   const relativeAgeBonus = Math.max(-MAX_AGE_BONUS, Math.min(MAX_AGE_BONUS, -AGE_WEIGHT * ageDelta))
 
-  const absoluteYouthBonus = Math.min(
-    MAX_ABSOLUTE_YOUTH_BONUS,
-    Math.max(0, ABSOLUTE_YOUTH_THRESHOLD - age) * ABSOLUTE_YOUTH_WEIGHT,
-  )
+  const yearsUnderThreshold = Math.max(0, ABSOLUTE_YOUTH_THRESHOLD - age)
+  const absoluteYouthBonus = Math.min(MAX_ABSOLUTE_YOUTH_BONUS, yearsUnderThreshold ** 2 * ABSOLUTE_YOUTH_WEIGHT)
 
   return levelBonus + relativeAgeBonus + absoluteYouthBonus
 }
