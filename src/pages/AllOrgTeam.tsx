@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Inbox } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { fetchHitters, fetchPitchers, fetchTeamGamesByLevel } from '@/lib/queries'
+import { fetchHitters, fetchPitchers } from '@/lib/queries'
 import { supabaseConfigured } from '@/lib/supabaseClient'
 import { CURRENT_SEASON } from '@/lib/constants'
 import { buildAllOrgTeams, primaryPosition, OUTFIELD_POS, type OrgTeam, type OrgTeamSlot } from '@/lib/allOrgTeam'
@@ -9,6 +9,9 @@ import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
 
 const TEAM_LABEL = { 1: 'First Team', 2: 'Second Team', 3: 'Third Team' } as const
 const TEAM_ACCENT = { 1: 'border-brave-gold', 2: 'border-navy-600', 3: 'border-brave-sky' } as const
+
+const MIN_PA = 60
+const MIN_IP = 10.0
 
 function isPitcher(p: HitterSeasonStats | PitcherSeasonStats): p is PitcherSeasonStats {
   return 'ip' in p
@@ -27,25 +30,17 @@ export default function AllOrgTeam() {
   } | null>(null)
 
   useEffect(() => {
-    Promise.all([fetchHitters([CURRENT_SEASON]), fetchPitchers([CURRENT_SEASON]), fetchTeamGamesByLevel()]).then(
-      ([hitters, pitchers, teamGamesByLevel]) => {
+    Promise.all([fetchHitters([CURRENT_SEASON]), fetchPitchers([CURRENT_SEASON])]).then(
+      ([hitters, pitchers]) => {
         setHasAnyData(hitters.length > 0 || pitchers.length > 0)
         setSampleHitters(hitters)
 
-        // Qualified only — 3.1 PA per scheduled team game for hitters, 1.0
-        // IP per scheduled team game for pitchers, to keep tiny-sample
-        // outliers (a September call-up with 4 PA, e.g.) out of the running.
-        // Note: the 1.0 IP/game bar is the same one MLB uses for its ERA
-        // qualifiers, which in practice mostly selects full-time starters —
-        // it's normal and expected for this to exclude most relievers.
-        const qualifiedHitters = hitters.filter((h) => {
-          const teamGames = teamGamesByLevel[h.level] ?? 130
-          return h.pa >= 3.1 * teamGames
-        })
-        const qualifiedPitchers = pitchers.filter((p) => {
-          const teamGames = teamGamesByLevel[p.level] ?? 130
-          return p.ip >= 1.0 * teamGames
-        })
+        // Qualified only — minimum 60 PA for hitters, 10.0 IP for pitchers,
+        // to filter out tiny-sample-size outliers while still keeping a
+        // reasonably deep pool (looser than the earlier per-team-game rate,
+        // which was excluding too many legitimate players).
+        const qualifiedHitters = hitters.filter((h) => h.pa >= MIN_PA)
+        const qualifiedPitchers = pitchers.filter((p) => p.ip >= MIN_IP)
 
         setPoolStats({
           totalHitters: hitters.length,
@@ -73,10 +68,10 @@ export default function AllOrgTeam() {
       <div>
         <h2 className="text-lg font-semibold text-navy-900 sm:text-xl">All-Organization Teams</h2>
         <p className="text-xs text-navy-900/50 sm:text-sm">
-          Qualified players only — 3.1 PA per scheduled team game for position players, 1.0 IP per
-          scheduled team game for pitchers — ranked by composite score: wRC+, OPS, OBP/AVG/SLG &amp;
-          BB:K for hitters; FIP, SIERA, ERA, WHIP &amp; K:BB for pitchers. See{' '}
-          <code>src/lib/scoring.ts</code> for the exact weighting.
+          Qualified players only — minimum {MIN_PA} PA for position players, {MIN_IP.toFixed(1)} IP
+          for pitchers — ranked by composite score: wRC+, OPS, OBP/AVG/SLG &amp; BB:K for hitters;
+          FIP, SIERA, ERA, WHIP &amp; K:BB for pitchers. See <code>src/lib/scoring.ts</code> for the
+          exact weighting.
         </p>
       </div>
 
@@ -89,11 +84,6 @@ export default function AllOrgTeam() {
             <span>Pitchers: {poolStats.qualifiedPitchers} / {poolStats.totalPitchers} qualified</span>
             <span className="text-navy-900/40">(9 OF / 15 pitcher slots needed for 3 full teams)</span>
           </div>
-          <p className="mt-1.5 text-navy-900/40">
-            The 1.0 IP/team-game bar is MLB's own ERA-qualifier standard, which in practice mostly
-            selects full-time starters — a thin qualified pitcher pool here usually means your org
-            doesn't have enough qualifying starters yet this season, not a bug.
-          </p>
         </div>
       )}
 
