@@ -76,16 +76,19 @@ async function main() {
   try {
     const page = await browser.newPage()
 
-    const mlbPositions = await scrapeMlbDepthChart(page)
-    console.log(`MLB: found positions for ${mlbPositions.size} players`)
+    const mlb = await scrapeMlbDepthChart(page)
+    console.log(`MLB: found ${mlb.batterPositions.size} batter + ${mlb.pitcherPositions.size} pitcher positions`)
 
-    const milbPositions = await scrapeMilbPowerRankings(page)
-    console.log(`MiLB: found positions for ${milbPositions.size} players`)
+    const milb = await scrapeMilbPowerRankings(page)
+    console.log(`MiLB: found ${milb.batterPositions.size} batter + ${milb.pitcherPositions.size} pitcher positions`)
 
-    const combined = new Map([...milbPositions, ...mlbPositions]) // MLB wins on overlap (shouldn't really overlap)
+    // Kept separate deliberately — a hitter can never receive a pitcher
+    // role or vice versa, even if a name happens to coincide.
+    const batterPositions = new Map([...milb.batterPositions, ...mlb.batterPositions])
+    const pitcherPositions = new Map([...milb.pitcherPositions, ...mlb.pitcherPositions])
 
-    await backfillTable('hitter_stats', combined)
-    await backfillTable('pitcher_stats', combined)
+    await backfillTable('hitter_stats', batterPositions)
+    await backfillTable('pitcher_stats', pitcherPositions)
   } finally {
     await browser.close()
   }
@@ -100,7 +103,12 @@ async function scrapeMlbDepthChart(page) {
     timeout: 60000,
   })
 
-  const positions = new Map()
+  // Kept as two SEPARATE maps on purpose — mixing hitter codes (OF/INF/...)
+  // and pitcher roles (SP/RP) into one lookup, then applying it to both
+  // tables, previously let a name-match write a pitcher role onto a hitter
+  // row (or vice versa). Each map only ever gets applied to its own table.
+  const batterPositions = new Map()
+  const pitcherPositions = new Map()
 
   // "ALL Batters" and "ALL Pitchers" sections each list one row per player
   // with their position embedded in the profile link's query string.
@@ -117,9 +125,9 @@ async function scrapeMlbDepthChart(page) {
   )
 
   for (const { name, rawPos } of rows) {
-    if (positions.has(name)) continue // first occurrence wins (ALL Batters/Pitchers table lists each player once already, but be safe)
     if (rawPos === 'P') continue // pitcher role (SP/RP) handled separately below, not as a raw "P" position
-    positions.set(name, normalizePosition(rawPos))
+    if (batterPositions.has(name)) continue // first occurrence wins
+    batterPositions.set(name, normalizePosition(rawPos))
   }
 
   // Pitcher role: compare total IP in the SP section vs the RP section for
@@ -130,10 +138,10 @@ async function scrapeMlbDepthChart(page) {
   for (const name of allPitcherNames) {
     const sp = spIp.get(name) ?? 0
     const rp = rpIp.get(name) ?? 0
-    positions.set(name, sp >= rp ? 'SP' : 'RP')
+    pitcherPositions.set(name, sp >= rp ? 'SP' : 'RP')
   }
 
-  return positions
+  return { batterPositions, pitcherPositions }
 }
 
 async function scrapeSectionIp(page, sectionId) {
@@ -194,7 +202,8 @@ async function scrapeMilbPowerRankings(page) {
     // ignore — fall back to pagination below
   }
 
-  const positions = new Map()
+  const batterPositions = new Map()
+  const pitcherPositions = new Map()
   let pageNum = 1
   const maxPages = 10 // safety cap
 
@@ -215,8 +224,10 @@ async function scrapeMilbPowerRankings(page) {
     )
 
     for (const { name, rawPos } of rows) {
-      if (positions.has(name)) continue // "only use the first one listed" — first occurrence wins, skip dupes/other pages
-      positions.set(name, normalizePosition(rawPos))
+      const isPitcherRole = rawPos.split('/')[0].trim().toUpperCase() === 'SP' || rawPos.split('/')[0].trim().toUpperCase() === 'RP'
+      const targetMap = isPitcherRole ? pitcherPositions : batterPositions
+      if (targetMap.has(name)) continue // "only use the first one listed" — first occurrence wins, skip dupes/other pages
+      targetMap.set(name, isPitcherRole ? rawPos.split('/')[0].trim().toUpperCase() : normalizePosition(rawPos))
     }
 
     // If we successfully got everything via "Infinity" page size, or this
@@ -232,28 +243,40 @@ async function scrapeMilbPowerRankings(page) {
     pageNum++
   }
 
-  return positions
+  return { batterPositions, pitcherPositions }
 }
 
 // ---------------------------------------------------------------------
 // Supabase write — only fills NULL positions, never overwrites
 // ---------------------------------------------------------------------
+const VALID_HITTER_CODES = new Set(['C', '1B', '2B', '3B', 'SS', 'INF', 'LF', 'CF', 'RF', 'OF', 'UTIL', 'DH'])
+const VALID_PITCHER_CODES = new Set(['SP', 'RP'])
+
 async function backfillTable(table, positionsByName) {
   const { data: rows, error } = await supabaseSelect(table, 'id,name,position,season')
   if (error) {
     console.error(`Failed to read ${table}:`, error)
     return
   }
+  const validCodes = table === 'hitter_stats' ? VALID_HITTER_CODES : VALID_PITCHER_CODES
 
   let updated = 0
+  let rejected = 0
   for (const row of rows) {
     if (row.position != null) continue // never touch an already-set position
     const match = positionsByName.get(row.name)
     if (!match) continue
+    if (!validCodes.has(match)) {
+      // Should be unreachable now that the maps are kept separate — kept as
+      // a safety net so a wrong-type code can never land in the database.
+      console.warn(`Skipping ${row.name}: "${match}" isn't a valid ${table} position.`)
+      rejected++
+      continue
+    }
     const res = await supabaseUpdate(table, row.id, { position: match })
     if (res.ok) updated++
   }
-  console.log(`${table}: filled in ${updated} blank position(s)`)
+  console.log(`${table}: filled in ${updated} blank position(s)${rejected ? `, rejected ${rejected} invalid match(es)` : ''}`)
 }
 
 async function supabaseSelect(table, columns) {
