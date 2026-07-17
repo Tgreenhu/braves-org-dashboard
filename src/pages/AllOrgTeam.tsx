@@ -171,38 +171,59 @@ function TeamCard({ team }: { team: OrgTeam }) {
 }
 
 function SlotRow({ slot }: { slot: OrgTeamSlot }) {
-  const { player, score } = slot
+  const { player, score, breakdown } = slot
+  const [expanded, setExpanded] = useState(false)
   return (
-    <div className="flex items-center gap-3 px-3 py-2 sm:px-4">
-      <span className="w-9 shrink-0 rounded bg-navy px-1.5 py-0.5 text-center text-[10px] font-semibold text-white">
-        {slot.slotLabel}
-      </span>
-      {player ? (
-        <>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-navy-950">{player.name}</div>
-            <div className="truncate text-[11px] text-navy-900/45">
-              {player.level} · {player.team} · Age {player.age}
+    <div className="px-3 py-2 sm:px-4">
+      <div className="flex items-center gap-3">
+        <span className="w-9 shrink-0 rounded bg-navy px-1.5 py-0.5 text-center text-[10px] font-semibold text-white">
+          {slot.slotLabel}
+        </span>
+        {player ? (
+          <>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-navy-950">{player.name}</div>
+              <div className="truncate text-[11px] text-navy-900/45">
+                {player.level} · {player.team} · Age {player.age}
+              </div>
             </div>
+            <div className="shrink-0 text-right text-xs text-navy-900/70">
+              {isPitcher(player) ? (
+                <span>
+                  {player.era?.toFixed(2) ?? '—'} ERA / {player.fip?.toFixed(2) ?? '—'} FIP
+                </span>
+              ) : (
+                <span>
+                  {player.ops?.toFixed(3) ?? '—'} OPS / {player.wrcPlus ?? '—'} wRC+
+                </span>
+              )}
+              {score !== null && breakdown && (
+                <button
+                  onClick={() => setExpanded((e) => !e)}
+                  className="block w-full text-right text-[10px] text-navy-900/40 underline decoration-dotted hover:text-navy-900"
+                >
+                  score {score.toFixed(2)} {expanded ? '▲' : '▼'}
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 text-xs italic text-navy-900/30">
+            Not enough data yet — upload more stats in Tab 6
           </div>
-          <div className="shrink-0 text-right text-xs text-navy-900/70">
-            {isPitcher(player) ? (
-              <span>
-                {player.era?.toFixed(2) ?? '—'} ERA / {player.fip?.toFixed(2) ?? '—'} FIP
+        )}
+      </div>
+      {expanded && breakdown && (
+        <div className="mt-1.5 ml-12 grid grid-cols-3 gap-x-3 gap-y-0.5 rounded-md bg-brave-cream px-2.5 py-2 text-[10px] text-navy-900/70 sm:grid-cols-4">
+          {Object.entries(breakdown).map(([label, value]) => (
+            <div key={label} className="flex justify-between gap-1">
+              <span className="text-navy-900/45">{label}</span>
+              <span className={value >= 0 ? 'text-emerald-700' : 'text-brave-red'}>
+                {value >= 0 ? '+' : ''}
+                {value.toFixed(3)}
               </span>
-            ) : (
-              <span>
-                {player.ops?.toFixed(3) ?? '—'} OPS / {player.wrcPlus ?? '—'} wRC+
-              </span>
-            )}
-            {score !== null && (
-              <div className="text-[10px] text-navy-900/40">score {score.toFixed(2)}</div>
-            )}
-          </div>
-        </>
-      ) : (
-        <div className="flex-1 text-xs italic text-navy-900/30">
-          Not enough data yet — upload more stats in Tab 6
+            </div>
+          ))}
         </div>
       )}
     </div>
