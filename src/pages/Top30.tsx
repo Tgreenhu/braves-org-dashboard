@@ -32,7 +32,6 @@ import { supabaseConfigured } from '@/lib/supabaseClient'
 import { useClickOutside } from '@/lib/useClickOutside'
 import {
   loadWorkingList,
-  loadWorkingBucket,
   saveWorkingState,
   loadSnapshots,
   saveSnapshots,
@@ -45,20 +44,20 @@ import type { Position, Top30Entry, Top30Snapshot } from '@/types'
 
 const POSITIONS: Position[] = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'IF', 'DH', 'SP', 'RP']
 
+const RANK_CAP = 50
+const SPLIT = 25 // left column = ranks 1-25, right column = ranks 26-50
+
 // Starts empty — nothing here until you actually build your own list.
 // (Working state persists to localStorage after your first edit, so this
 // only matters on a completely fresh browser/device.)
 const STARTER_LIST: Top30Entry[] = []
-const STARTER_BUCKET: Top30Entry[] = []
 
-const LIST_CONTAINER = 'top30'
-const BUCKET_CONTAINER = 'bucket'
+const LIST_CONTAINER = 'top50'
 
 export default function Top30() {
   // Working state (today's editable list) persists to localStorage so it
   // survives a refresh but is NOT history — only "Submit" creates history.
   const [list, setList] = useState<Top30Entry[]>(() => loadWorkingList(STARTER_LIST))
-  const [bucket, setBucket] = useState<Top30Entry[]>(() => loadWorkingBucket(STARTER_BUCKET))
   const [snapshots, setSnapshots] = useState<Top30Snapshot[]>(() => loadSnapshots())
   const [activeId, setActiveId] = useState<string | null>(null)
   const [addMode, setAddMode] = useState<'database' | 'manual'>('database')
@@ -73,26 +72,22 @@ export default function Top30() {
     fetchCombinedPlayerPool().then(setDbPool)
   }, [])
 
-  useEffect(() => saveWorkingState(list, bucket), [list, bucket])
+  // Kept passing an empty bucket to the existing save/snapshot functions —
+  // history and cross-device persistence work exactly as before, this page
+  // just no longer has a separate visible "bucket" column.
+  useEffect(() => saveWorkingState(list, []), [list])
   useEffect(() => saveSnapshots(snapshots), [snapshots])
 
   const latestSnapshot = snapshots[0] // loadSnapshots() returns newest-first
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
-  const allEntries = [...list, ...bucket]
   const usedPlayerIds = useMemo(
-    () => new Set(allEntries.filter((e) => e.playerId).map((e) => e.playerId as string)),
-    [list, bucket],
+    () => new Set(list.filter((e) => e.playerId).map((e) => e.playerId as string)),
+    [list],
   )
 
-  const findContainer = (id: string): typeof LIST_CONTAINER | typeof BUCKET_CONTAINER | null => {
-    if (list.some((p) => p.id === id)) return LIST_CONTAINER
-    if (bucket.some((p) => p.id === id)) return BUCKET_CONTAINER
-    return null
-  }
-
-  const activeEntry = activeId ? allEntries.find((e) => e.id === activeId) ?? null : null
+  const activeEntry = activeId ? list.find((e) => e.id === activeId) ?? null : null
 
   const handleDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id))
 
@@ -100,58 +95,28 @@ export default function Top30() {
     const { active, over } = event
     setActiveId(null)
     if (!over) return
-    const activeId = String(active.id)
-    const overId = String(over.id)
+    const activeIdStr = String(active.id)
+    const overIdStr = String(over.id)
+    if (activeIdStr === overIdStr) return
 
-    const fromContainer = findContainer(activeId)
-    const toContainer =
-      overId === LIST_CONTAINER || overId === BUCKET_CONTAINER ? overId : findContainer(overId)
-    if (!fromContainer || !toContainer) return
+    const oldIndex = list.findIndex((i) => i.id === activeIdStr)
+    const newIndex = list.findIndex((i) => i.id === overIdStr)
+    if (oldIndex === -1 || newIndex === -1) return
 
-    if (fromContainer === toContainer) {
-      const setFn = fromContainer === LIST_CONTAINER ? setList : setBucket
-      const items = fromContainer === LIST_CONTAINER ? list : bucket
-      const oldIndex = items.findIndex((i) => i.id === activeId)
-      const newIndex = items.findIndex((i) => i.id === overId)
-      if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return
-      const reordered = arrayMove(items, oldIndex, newIndex)
-      setFn(renumber(reordered, fromContainer === LIST_CONTAINER))
-      return
-    }
-
-    const sourceItems = fromContainer === LIST_CONTAINER ? list : bucket
-    const destItems = toContainer === LIST_CONTAINER ? list : bucket
-    const moving = sourceItems.find((i) => i.id === activeId)
-    if (!moving) return
-
-    const newSource = sourceItems.filter((i) => i.id !== activeId)
-    const insertIndex = destItems.findIndex((i) => i.id === overId)
-    const newDest = [...destItems]
-    newDest.splice(insertIndex === -1 ? newDest.length : insertIndex, 0, moving)
-
-    if (fromContainer === LIST_CONTAINER) {
-      setList(renumber(newSource, true))
-      setBucket(renumber(newDest, false))
-    } else {
-      setBucket(renumber(newSource, false))
-      setList(renumber(newDest, true))
-    }
+    const reordered = arrayMove(list, oldIndex, newIndex)
+    setList(renumber(reordered))
   }
 
-  const renumber = (items: Top30Entry[], numbered: boolean) =>
-    items.map((item, i) => ({ ...item, rank: numbered ? i + 1 : null }))
+  const renumber = (items: Top30Entry[]) => items.map((item, i) => ({ ...item, rank: i + 1 }))
 
   const addEntry = (entry: Omit<Top30Entry, 'id' | 'rank'>) => {
+    if (list.length >= RANK_CAP) return // full — remove someone first
     const withMeta: Top30Entry = {
       ...entry,
       id: `p-${Date.now()}`,
-      rank: list.length < 30 ? list.length + 1 : null,
+      rank: list.length + 1,
     }
-    if (list.length < 30) {
-      setList((prev) => [...prev, withMeta])
-    } else {
-      setBucket((prev) => [...prev, withMeta])
-    }
+    setList((prev) => [...prev, withMeta])
   }
 
   const addFromDatabase = (player: PoolPlayer) => {
@@ -171,23 +136,21 @@ export default function Top30() {
   }
 
   const removeEntry = (id: string) => {
-    setList((prev) => renumber(prev.filter((p) => p.id !== id), true))
-    setBucket((prev) => prev.filter((p) => p.id !== id))
+    setList((prev) => renumber(prev.filter((p) => p.id !== id)))
   }
 
   const linkEntry = (id: string, match: PoolPlayer) => {
-    const patch = (items: Top30Entry[]) =>
-      items.map((item) =>
+    setList((prev) =>
+      prev.map((item) =>
         item.id === id
           ? { ...item, playerId: match.playerId, position: match.position as Position, age: match.age, source: 'database' as const }
           : item,
-      )
-    setList((prev) => patch(prev))
-    setBucket((prev) => patch(prev))
+      ),
+    )
   }
 
   const handleSubmit = () => {
-    const snapshot = createSnapshot(list, bucket)
+    const snapshot = createSnapshot(list, [])
     setSnapshots((prev) => [snapshot, ...prev])
     setJustSubmitted(true)
     setTimeout(() => setJustSubmitted(false), 2500)
@@ -197,11 +160,14 @@ export default function Top30() {
     setSnapshots((prev) => prev.filter((s) => s.id !== id))
   }
 
+  const leftHalf = list.slice(0, SPLIT)
+  const rightHalf = list.slice(SPLIT, RANK_CAP)
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-navy-900 sm:text-xl">My Top 30 List</h2>
+          <h2 className="text-lg font-semibold text-navy-900 sm:text-xl">My Top 50 List</h2>
           <p className="text-xs text-navy-900/50 sm:text-sm">
             Edit freely — nothing is saved to history until you hit Submit.
             {latestSnapshot && (
@@ -249,6 +215,12 @@ export default function Top30() {
             <UserPlus size={13} /> Add manually
           </button>
         </div>
+
+        {list.length >= RANK_CAP && (
+          <p className="mb-2 text-xs font-medium text-brave-red">
+            List is full at {RANK_CAP} — remove someone before adding another.
+          </p>
+        )}
 
         {addMode === 'database' ? (
           !supabaseConfigured ? (
@@ -322,30 +294,34 @@ export default function Top30() {
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <DownloadableCard title="Top 30" subtitle={`${list.length} / 30`} filename="braves-top-30">
-            <DroppableList
-              id={LIST_CONTAINER}
-              items={list}
-              emptyLabel="Drag or add players here"
-              onRemove={removeEntry}
-              onLink={linkEntry}
-              latestSnapshot={latestSnapshot}
-              dbPool={dbPool}
-            />
-          </DownloadableCard>
-          <DownloadableCard title="Off the List" subtitle={`${bucket.length} players`} filename="braves-top-30-bucket">
-            <DroppableList
-              id={BUCKET_CONTAINER}
-              items={bucket}
-              emptyLabel="No one's fallen off yet"
-              onRemove={removeEntry}
-              onLink={linkEntry}
-              latestSnapshot={latestSnapshot}
-              dbPool={dbPool}
-            />
-          </DownloadableCard>
-        </div>
+        {/* One SortableContext spanning the full 1-50 list — split into two
+            visual columns purely for readability. Dragging a card from the
+            right column into the left (or vice versa) reorders it into that
+            rank range, since under the hood it's still one continuous list. */}
+        <SortableContext id={LIST_CONTAINER} items={list.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <DownloadableCard title="Rank 1–25" subtitle={`${leftHalf.length} / ${SPLIT}`} filename="braves-top-50-rank-1-25">
+              <RankColumn
+                items={leftHalf}
+                emptyLabel="Drag or add players here"
+                onRemove={removeEntry}
+                onLink={linkEntry}
+                latestSnapshot={latestSnapshot}
+                dbPool={dbPool}
+              />
+            </DownloadableCard>
+            <DownloadableCard title="Rank 26–50" subtitle={`${rightHalf.length} / ${RANK_CAP - SPLIT}`} filename="braves-top-50-rank-26-50">
+              <RankColumn
+                items={rightHalf}
+                emptyLabel="Ranks 26-50 fill in as you add more players"
+                onRemove={removeEntry}
+                onLink={linkEntry}
+                latestSnapshot={latestSnapshot}
+                dbPool={dbPool}
+              />
+            </DownloadableCard>
+          </div>
+        </SortableContext>
 
         <DragOverlay>{activeEntry ? <PlayerCardVisual entry={activeEntry} dragging /> : null}</DragOverlay>
       </DndContext>
@@ -360,7 +336,7 @@ function HistoryPanel({ snapshots, onDelete }: { snapshots: Top30Snapshot[]; onD
   if (snapshots.length === 0) {
     return (
       <div className="card p-4 text-center text-xs text-navy-900/40">
-        No submissions yet — hit Submit to save today's Top 30 as your first dated snapshot.
+        No submissions yet — hit Submit to save today's Top 50 as your first dated snapshot.
       </div>
     )
   }
@@ -497,8 +473,7 @@ function DatabaseSearch({
   )
 }
 
-function DroppableList({
-  id,
+function RankColumn({
   items,
   emptyLabel,
   onRemove,
@@ -506,7 +481,6 @@ function DroppableList({
   latestSnapshot,
   dbPool,
 }: {
-  id: string
   items: Top30Entry[]
   emptyLabel: string
   onRemove: (id: string) => void
@@ -515,23 +489,21 @@ function DroppableList({
   dbPool: PoolPlayer[] | null
 }) {
   return (
-    <SortableContext id={id} items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-      <div id={id} className="min-h-[80px] space-y-1.5 p-3 sm:p-4">
-        {items.length === 0 && (
-          <p className="rounded-lg border border-dashed border-navy-950/15 py-6 text-center text-xs text-navy-900/35">{emptyLabel}</p>
-        )}
-        {items.map((entry) => (
-          <SortablePlayerCard
-            key={entry.id}
-            entry={entry}
-            onRemove={onRemove}
-            onLink={onLink}
-            previousRank={getPreviousRank(entry, latestSnapshot)}
-            dbPool={dbPool}
-          />
-        ))}
-      </div>
-    </SortableContext>
+    <div className="min-h-[80px] space-y-1.5 p-3 sm:p-4">
+      {items.length === 0 && (
+        <p className="rounded-lg border border-dashed border-navy-950/15 py-6 text-center text-xs text-navy-900/35">{emptyLabel}</p>
+      )}
+      {items.map((entry) => (
+        <SortablePlayerCard
+          key={entry.id}
+          entry={entry}
+          onRemove={onRemove}
+          onLink={onLink}
+          previousRank={getPreviousRank(entry, latestSnapshot)}
+          dbPool={dbPool}
+        />
+      ))}
+    </div>
   )
 }
 
