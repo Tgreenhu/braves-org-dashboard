@@ -69,6 +69,7 @@ export interface TeamLevelRecord {
 }
 
 export interface HitterSeasonStats {
+  dbId: string // the row's own primary key in Supabase — needed to save edits back
   playerId: string
   name: string
   season: number // e.g. 2026 — current season, or a past year from the Historical Archive
@@ -90,6 +91,7 @@ export interface HitterSeasonStats {
   hr: number
   sb: number
   mlbGamesCareer: number // career MLB games (any team) — drives Tab 4 eligibility
+  isTotal: boolean // true = this row is the player's combined season line (or their only level)
   // Batted Ball (optional — only present if that Fangraphs report was uploaded)
   gbPct?: number | null
   fbPct?: number | null
@@ -116,6 +118,7 @@ export interface HitterSeasonStats {
 }
 
 export interface PitcherSeasonStats {
+  dbId: string
   playerId: string
   name: string
   season: number
@@ -135,6 +138,7 @@ export interface PitcherSeasonStats {
   bbPct: number
   kbbPct: number
   mlbGamesCareer: number
+  isTotal: boolean
   // Batted Ball
   gbPct?: number | null
   fbPct?: number | null
