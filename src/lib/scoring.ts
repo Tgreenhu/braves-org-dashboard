@@ -100,8 +100,14 @@ function zScores(nums: (number | null | undefined)[]) {
   return nums.map((n) => (n == null || Number.isNaN(n) ? 0 : (n - m) / sd))
 }
 
+export interface LevelAgeBreakdown {
+  levelBonus: number
+  relativeAgeBonus: number
+  absoluteYouthBonus: number
+}
+
 /** Level prestige + age-for-level bonus + absolute-youth bonus, shared by both scoreHitters and scorePitchers. */
-function levelAgeBonus(level: HitterSeasonStats['level'], age: number): number {
+function levelAgeBonus(level: HitterSeasonStats['level'], age: number): LevelAgeBreakdown {
   const levelBonus = LEVEL_WEIGHT * (LEVEL_FACTOR[level] ?? 0.5)
 
   const ageDelta = age - (LEVEL_AVG_AGE[level] ?? 22) // positive = older than typical for level
@@ -110,12 +116,14 @@ function levelAgeBonus(level: HitterSeasonStats['level'], age: number): number {
   const yearsUnderThreshold = Math.max(0, ABSOLUTE_YOUTH_THRESHOLD - age)
   const absoluteYouthBonus = Math.min(MAX_ABSOLUTE_YOUTH_BONUS, yearsUnderThreshold ** 2 * ABSOLUTE_YOUTH_WEIGHT)
 
-  return levelBonus + relativeAgeBonus + absoluteYouthBonus
+  return { levelBonus, relativeAgeBonus, absoluteYouthBonus }
 }
 
 export interface ScoredPlayer<T> {
   player: T
   score: number
+  /** Every weighted component that fed the total, for the on-screen "why this score" breakdown. */
+  breakdown: Record<string, number>
 }
 
 export function scoreHitters(hitters: HitterSeasonStats[]): ScoredPlayer<HitterSeasonStats>[] {
@@ -129,17 +137,30 @@ export function scoreHitters(hitters: HitterSeasonStats[]): ScoredPlayer<HitterS
     bbKRatio: zScores(bbk),
   }
   return hitters
-    .map((player, i) => ({
-      player,
-      score:
-        z.wrcPlus[i] * HITTER_WEIGHTS.wrcPlus +
-        z.ops[i] * HITTER_WEIGHTS.ops +
-        z.obp[i] * HITTER_WEIGHTS.obp +
-        z.avg[i] * HITTER_WEIGHTS.avg +
-        z.slg[i] * HITTER_WEIGHTS.slg +
-        z.bbKRatio[i] * HITTER_WEIGHTS.bbKRatio +
-        levelAgeBonus(player.level, player.age),
-    }))
+    .map((player, i) => {
+      const wrcPlusW = z.wrcPlus[i] * HITTER_WEIGHTS.wrcPlus
+      const opsW = z.ops[i] * HITTER_WEIGHTS.ops
+      const obpW = z.obp[i] * HITTER_WEIGHTS.obp
+      const avgW = z.avg[i] * HITTER_WEIGHTS.avg
+      const slgW = z.slg[i] * HITTER_WEIGHTS.slg
+      const bbKW = z.bbKRatio[i] * HITTER_WEIGHTS.bbKRatio
+      const { levelBonus, relativeAgeBonus, absoluteYouthBonus } = levelAgeBonus(player.level, player.age)
+      return {
+        player,
+        score: wrcPlusW + opsW + obpW + avgW + slgW + bbKW + levelBonus + relativeAgeBonus + absoluteYouthBonus,
+        breakdown: {
+          'wRC+': wrcPlusW,
+          OPS: opsW,
+          OBP: obpW,
+          AVG: avgW,
+          SLG: slgW,
+          'BB:K': bbKW,
+          Level: levelBonus,
+          'Age (rel)': relativeAgeBonus,
+          'Age (abs youth)': absoluteYouthBonus,
+        },
+      }
+    })
     .sort((a, b) => b.score - a.score)
 }
 
@@ -154,15 +175,27 @@ export function scorePitchers(pitchers: PitcherSeasonStats[]): ScoredPlayer<Pitc
     kbbRatio: zScores(kbb),
   }
   return pitchers
-    .map((player, i) => ({
-      player,
-      score:
-        z.fip[i] * PITCHER_WEIGHTS.fip +
-        z.siera[i] * PITCHER_WEIGHTS.siera +
-        z.era[i] * PITCHER_WEIGHTS.era +
-        z.whip[i] * PITCHER_WEIGHTS.whip +
-        z.kbbRatio[i] * PITCHER_WEIGHTS.kbbRatio +
-        levelAgeBonus(player.level, player.age),
-    }))
+    .map((player, i) => {
+      const fipW = z.fip[i] * PITCHER_WEIGHTS.fip
+      const sieraW = z.siera[i] * PITCHER_WEIGHTS.siera
+      const eraW = z.era[i] * PITCHER_WEIGHTS.era
+      const whipW = z.whip[i] * PITCHER_WEIGHTS.whip
+      const kbbW = z.kbbRatio[i] * PITCHER_WEIGHTS.kbbRatio
+      const { levelBonus, relativeAgeBonus, absoluteYouthBonus } = levelAgeBonus(player.level, player.age)
+      return {
+        player,
+        score: fipW + sieraW + eraW + whipW + kbbW + levelBonus + relativeAgeBonus + absoluteYouthBonus,
+        breakdown: {
+          FIP: fipW,
+          SIERA: sieraW,
+          ERA: eraW,
+          WHIP: whipW,
+          'K:BB': kbbW,
+          Level: levelBonus,
+          'Age (rel)': relativeAgeBonus,
+          'Age (abs youth)': absoluteYouthBonus,
+        },
+      }
+    })
     .sort((a, b) => b.score - a.score)
 }
