@@ -20,6 +20,7 @@ export interface OrgTeamSlot {
   slotLabel: string // e.g. "1B", "OF", "C", "DH", "SP1"
   player: HitterSeasonStats | PitcherSeasonStats | null
   score: number | null
+  breakdown: Record<string, number> | null
 }
 
 export interface OrgTeam {
@@ -58,19 +59,19 @@ export function buildAllOrgTeams(
     const infielders: OrgTeamSlot[] = []
     for (let i = 0; i < 4; i++) {
       const pick = takeNext(scoredHitters, (h) => INFIELD_POS.has(primaryPosition(h.position)))
-      infielders.push({ slotLabel: 'IF', player: pick?.player ?? null, score: pick?.score ?? null })
+      infielders.push({ slotLabel: 'IF', player: pick?.player ?? null, score: pick?.score ?? null, breakdown: pick?.breakdown ?? null })
     }
     const outfielders: OrgTeamSlot[] = []
     for (let i = 0; i < 3; i++) {
       const pick = takeNext(scoredHitters, (h) => OUTFIELD_POS.has(primaryPosition(h.position)))
-      outfielders.push({ slotLabel: 'OF', player: pick?.player ?? null, score: pick?.score ?? null })
+      outfielders.push({ slotLabel: 'OF', player: pick?.player ?? null, score: pick?.score ?? null, breakdown: pick?.breakdown ?? null })
     }
     const cPick = takeNext(scoredHitters, (h) => CATCHER_POS.has(primaryPosition(h.position)))
-    const catcher: OrgTeamSlot = { slotLabel: 'C', player: cPick?.player ?? null, score: cPick?.score ?? null }
+    const catcher: OrgTeamSlot = { slotLabel: 'C', player: cPick?.player ?? null, score: cPick?.score ?? null, breakdown: cPick?.breakdown ?? null }
 
     // DH = next best remaining position player, any position
     const dhPick = takeNext(scoredHitters, () => true)
-    const dh: OrgTeamSlot = { slotLabel: 'DH', player: dhPick?.player ?? null, score: dhPick?.score ?? null }
+    const dh: OrgTeamSlot = { slotLabel: 'DH', player: dhPick?.player ?? null, score: dhPick?.score ?? null, breakdown: dhPick?.breakdown ?? null }
 
     const pitcherSlots: OrgTeamSlot[] = []
     const usedPitchers = new Set<string>()
@@ -82,11 +83,11 @@ export function buildAllOrgTeams(
         .some((slot) => slot.player && slot.player.playerId === sp.player.playerId)
       if (already || usedPitchers.has(sp.player.playerId)) continue
       usedPitchers.add(sp.player.playerId)
-      pitcherSlots.push({ slotLabel: `P${taken + 1}`, player: sp.player, score: sp.score })
+      pitcherSlots.push({ slotLabel: `P${taken + 1}`, player: sp.player, score: sp.score, breakdown: sp.breakdown })
       taken++
     }
     while (pitcherSlots.length < 5) {
-      pitcherSlots.push({ slotLabel: `P${pitcherSlots.length + 1}`, player: null, score: null })
+      pitcherSlots.push({ slotLabel: `P${pitcherSlots.length + 1}`, player: null, score: null, breakdown: null })
     }
 
     teams.push({ teamNumber, infielders, outfielders, catcher, dh, pitchers: pitcherSlots })
