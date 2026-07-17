@@ -17,7 +17,7 @@ const PITCHER_VIEWS: PitcherView[] = ['Standard', 'Batted Ball', 'Statcast', 'Pi
 
 type Col<T> = { key: keyof T; label: string; numeric?: boolean; fmt?: (v: any) => string }
 
-const HITTER_POSITION_OPTIONS = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'DH']
+const HITTER_POSITION_OPTIONS = ['C', '1B', '2B', '3B', 'SS', 'INF', 'LF', 'CF', 'RF', 'OF', 'UTIL', 'DH']
 const PITCHER_POSITION_OPTIONS = ['SP', 'RP']
 
 const pct = (v: any) => (v == null ? '—' : `${Number(v).toFixed(2)}%`)
