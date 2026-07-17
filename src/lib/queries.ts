@@ -337,10 +337,11 @@ export async function fetchHitters(seasons: number[]): Promise<HitterSeasonStats
   const results: HitterSeasonStats[] = []
 
   if (wantCurrent) {
-    const current = await cachedFetch('hitter_stats:current', async () => {
-      const { data, error } = await supabase.from('hitter_stats').select('*')
-      return error || !data ? [] : data.map(mapHitterRow)
-    })
+    // Not cached — current-season rows can now change from outside the app
+    // (manual position edits, SQL, the standings/position automations), so
+    // a stale-forever cache would hide those changes on other devices.
+    const { data, error } = await supabase.from('hitter_stats').select('*')
+    const current = error || !data ? [] : data.map(mapHitterRow)
     results.push(...current)
   }
 
@@ -367,10 +368,9 @@ export async function fetchPitchers(seasons: number[]): Promise<PitcherSeasonSta
   const results: PitcherSeasonStats[] = []
 
   if (wantCurrent) {
-    const current = await cachedFetch('pitcher_stats:current', async () => {
-      const { data, error } = await supabase.from('pitcher_stats').select('*')
-      return error || !data ? [] : data.map(mapPitcherRow)
-    })
+    // Not cached — see the matching comment in fetchHitters above.
+    const { data, error } = await supabase.from('pitcher_stats').select('*')
+    const current = error || !data ? [] : data.map(mapPitcherRow)
     results.push(...current)
   }
 
