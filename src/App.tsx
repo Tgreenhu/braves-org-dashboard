@@ -24,7 +24,7 @@ const TABS = [
   { id: 'players', label: 'Players', short: 'Players', icon: Users, Component: Players },
   { id: 'all-org', label: 'All-Org Team', short: 'All-Org', icon: Trophy, Component: AllOrgTeam },
   { id: 'prospects', label: 'Prospect Comps', short: 'Comps', icon: Radar, Component: ProspectComps },
-  { id: 'top30', label: 'My Top 30', short: 'Top 30', icon: ListOrdered, Component: Top30 },
+  { id: 'top30', label: 'My Top 50', short: 'Top 50', icon: ListOrdered, Component: Top30 },
   { id: 'upload', label: 'Upload', short: 'Upload', icon: UploadCloud, Component: Upload },
   { id: 'writer', label: 'Writer', short: 'Writer', icon: PenLine, Component: Writer },
 ] as const
