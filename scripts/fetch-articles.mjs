@@ -1,19 +1,20 @@
 // Pulls new articles from both outlets into `writer_articles`, once a day
-// at 8am America/New_York (same DST-safe pattern as fetch-standings.mjs).
+// at 8am America/New_York (same DST-safe pattern as the other scripts).
 //
-// Both sources are read via RSS/XML, not scraped HTML — much more
-// reliable than the MiLB standings pages, since RSS feeds are static XML
-// with no JavaScript rendering involved:
-//   - Just Baseball: standard WordPress author feed
-//   - Braves Today: Substack publication feed, filtered down to just this
-//     author's posts (the publication has multiple contributors)
+// Rebuilt on Playwright (a real headless browser) after the plain-fetch
+// version failed for both sources:
+//   - Braves Today's RSS feed returned a flat 403 — most likely bot
+//     detection rejecting a request with no real browser signature.
+//   - Just Baseball's guessed feed URL returned 200 but zero parseable
+//     items — almost certainly a soft-404 (a normal page, not a feed)
+//     that the site returns with a 200 status instead of an error.
+// A real browser sidesteps both: it presents a normal browser fingerprint,
+// and this scrapes the actual page content instead of a guessed feed URL.
 //
-// IMPORTANT — like the standings script, this is best-effort and untested
-// against the live feeds (no network access to either site while writing
-// this). The exact feed URL and the author-name match on the Substack
-// side are the two things most likely to need adjusting after a real run
-// — check the Actions log and send it over if either source comes back
-// with 0 articles.
+// IMPORTANT — like the other Playwright scripts, this is best-effort and
+// untested against the live sites. Check the Actions log after a run.
+
+import { chromium } from 'playwright'
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -33,93 +34,121 @@ if (nyHour !== 8 && process.env.FORCE_RUN !== 'true') {
   process.exit(0)
 }
 
-const JUST_BASEBALL_FEED = 'https://www.justbaseball.com/author/taylorgreenhut/feed/'
-const BRAVES_TODAY_FEED = 'https://bravestoday.substack.com/feed'
-const AUTHOR_NAME_MATCH = /\btaylor\b|greenhut|tgod176/i // byline reads just "Taylor" (confirmed from a real published post), keeping the others as fallback in case the feed formats it differently
+const JUST_BASEBALL_AUTHOR_URL = 'https://www.justbaseball.com/author/taylorgreenhut/'
+const BRAVES_TODAY_ARCHIVE_URL = 'https://bravestoday.substack.com/archive'
+const AUTHOR_NAME_MATCH = /\btaylor\b|greenhut|tgod176/i // byline on Braves Today reads just "Taylor" — confirmed from a real published post
 
 async function main() {
-  const [justBaseballArticles, bravesTodayArticles] = await Promise.all([
-    fetchJustBaseball(),
-    fetchBravesToday(),
-  ])
+  const browser = await chromium.launch()
+  try {
+    const page = await browser.newPage()
 
-  const all = [...justBaseballArticles, ...bravesTodayArticles]
-  console.log(`Found ${justBaseballArticles.length} Just Baseball + ${bravesTodayArticles.length} Braves Today = ${all.length} total`)
+    const justBaseballArticles = await scrapeJustBaseball(page)
+    console.log(`Just Baseball: found ${justBaseballArticles.length} articles`)
 
-  for (const article of all) {
-    await upsertArticle(article)
+    const bravesTodayArticles = await scrapeBravesToday(page)
+    console.log(`Braves Today: found ${bravesTodayArticles.length} articles by a matching author`)
+
+    const all = [...justBaseballArticles, ...bravesTodayArticles]
+    for (const article of all) {
+      await upsertArticle(article)
+    }
+    console.log(`Upserted ${all.length} total.`)
+  } finally {
+    await browser.close()
   }
-
-  console.log(`Upserted ${all.length} articles.`)
 }
 
-async function fetchJustBaseball() {
-  const res = await fetch(JUST_BASEBALL_FEED)
-  if (!res.ok) {
-    console.warn(`Just Baseball feed request failed: ${res.status}`)
-    return []
+// ---------------------------------------------------------------------
+// Just Baseball — paginated author page (not a guessed feed URL)
+// ---------------------------------------------------------------------
+async function scrapeJustBaseball(page) {
+  const articles = []
+  let pageNum = 1
+  const maxPages = 10 // safety cap
+
+  while (pageNum <= maxPages) {
+    const url = pageNum === 1 ? JUST_BASEBALL_AUTHOR_URL : `${JUST_BASEBALL_AUTHOR_URL}page/${pageNum}/`
+    const res = await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => null)
+    if (!res || !res.ok()) break // ran past the last real page
+
+    const rows = await page.$$eval('a', (links) =>
+      links
+        .filter((a) => /justbaseball\.com\/(mlb|prospects|international-baseball|fantasy)\//.test(a.href))
+        .map((a) => ({ title: a.textContent.trim(), url: a.href }))
+        .filter((r) => r.title.length > 10), // skip nav/icon links with no real title text
+    )
+
+    const deduped = Array.from(new Map(rows.map((r) => [r.url, r])).values())
+    if (deduped.length === 0) break // no more pages
+
+    for (const r of deduped) {
+      articles.push({
+        title: r.title,
+        url: r.url,
+        company: 'Just Baseball',
+        category: null,
+        content_type: 'Article',
+        published_date: null, // not reliably available from the listing page without opening each article; add manually if needed
+        source: 'scraped',
+      })
+    }
+    pageNum++
   }
-  const xml = await res.text()
-  return parseRssItems(xml).map((item) => ({
-    title: item.title,
-    url: item.link,
-    company: 'Just Baseball',
-    category: item.category ?? null,
-    content_type: 'Article',
-    published_date: item.pubDate ? new Date(item.pubDate).toISOString().slice(0, 10) : null,
-    source: 'scraped',
-  }))
+
+  return articles
 }
 
-async function fetchBravesToday() {
-  const res = await fetch(BRAVES_TODAY_FEED)
-  if (!res.ok) {
-    console.warn(`Braves Today feed request failed: ${res.status}`)
+// ---------------------------------------------------------------------
+// Braves Today — archive page, filtered to posts with a matching byline.
+// Substack's archive view for multi-author publications shows each post's
+// byline directly in the listing, so this doesn't need to open every post.
+// ---------------------------------------------------------------------
+async function scrapeBravesToday(page) {
+  const res = await page.goto(BRAVES_TODAY_ARCHIVE_URL, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => null)
+  if (!res || !res.ok()) {
+    console.warn(`Braves Today archive request failed: ${res ? res.status() : 'no response'}`)
     return []
   }
-  const xml = await res.text()
-  return parseRssItems(xml)
-    .filter((item) => (item.creator ? AUTHOR_NAME_MATCH.test(item.creator) : false))
-    .map((item) => ({
-      title: item.title,
-      url: item.link,
+
+  // Scroll a handful of times to load more of the archive (it's an
+  // infinite-scroll list), then read whatever's rendered.
+  for (let i = 0; i < 5; i++) {
+    await page.mouse.wheel(0, 2000)
+    await page.waitForTimeout(800)
+  }
+
+  const posts = await page.$$eval('a[href*="/p/"]', (links) =>
+    links
+      .map((a) => {
+        const container = a.closest('article, .post-preview, div')
+        return {
+          title: a.textContent.trim(),
+          url: a.href,
+          containerText: container ? container.textContent : '',
+        }
+      })
+      .filter((r) => r.title.length > 10),
+  )
+
+  const deduped = Array.from(new Map(posts.map((r) => [r.url, r])).values())
+
+  return deduped
+    .filter((r) => AUTHOR_NAME_MATCH.test(r.containerText))
+    .map((r) => ({
+      title: r.title,
+      url: r.url,
       company: 'Braves Today',
-      category: item.category ?? null,
+      category: null,
       content_type: 'Article',
-      published_date: item.pubDate ? new Date(item.pubDate).toISOString().slice(0, 10) : null,
+      published_date: null,
       source: 'scraped',
     }))
 }
 
-/**
- * Minimal RSS 2.0 <item> parser using regex rather than a full XML
- * library — RSS is simple/regular enough that this is reliable, and it
- * avoids adding a dependency just for this. Handles CDATA-wrapped fields,
- * which both WordPress and Substack use for title/creator.
- */
-function parseRssItems(xml) {
-  const items = []
-  const itemBlocks = xml.match(/<item>[\s\S]*?<\/item>/g) ?? []
-  for (const block of itemBlocks) {
-    items.push({
-      title: extractTag(block, 'title'),
-      link: extractTag(block, 'link'),
-      pubDate: extractTag(block, 'pubDate'),
-      category: extractTag(block, 'category'),
-      creator: extractTag(block, 'dc:creator'),
-    })
-  }
-  return items.filter((i) => i.title && i.link)
-}
-
-function extractTag(block, tag) {
-  const match = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`))
-  if (!match) return null
-  return match[1]
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/, '$1')
-    .trim()
-}
-
+// ---------------------------------------------------------------------
+// Supabase write
+// ---------------------------------------------------------------------
 async function upsertArticle(article) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/writer_articles?on_conflict=url`, {
     method: 'POST',
