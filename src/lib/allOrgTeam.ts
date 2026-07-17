@@ -2,7 +2,7 @@ import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
 import { scoreHitters, scorePitchers, type ScoredPlayer } from '@/lib/scoring'
 
 const INFIELD_POS = new Set(['1B', '2B', '3B', 'SS', 'IF', 'INF', 'UTIL', 'FIRST', 'SECOND', 'THIRD', 'SHORTSTOP', '3', '4', '5', '6'])
-const OUTFIELD_POS = new Set(['LF', 'CF', 'RF', 'OF', 'UTIL', 'LEFT', 'CENTER', 'RIGHT', 'OUTFIELD', '7', '8', '9'])
+export const OUTFIELD_POS = new Set(['LF', 'CF', 'RF', 'OF', 'UTIL', 'LEFT', 'CENTER', 'RIGHT', 'OUTFIELD', '7', '8', '9'])
 const CATCHER_POS = new Set(['C', 'CATCHER', '2'])
 
 /**
