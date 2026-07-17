@@ -3,14 +3,15 @@ import { LEVEL_FACTOR, LEVEL_AVG_AGE } from '@/lib/levelBaselines'
 
 /**
  * How much level and age-for-level shift the composite score, on top of
- * the pure stat-based z-score below. Both are additive bonuses/penalties
- * in the same rough units as the stat score itself (which typically spans
- * about -2 to +2), so a full level's difference or a several-year age gap
- * can meaningfully move the ranking without completely overriding a much
- * better stat line. Tune these two numbers first if the balance feels off.
+ * the pure stat-based z-score below. These are intentionally modest — the
+ * stat score typically spans about -2 to +2, and level+age should nudge
+ * that, not swamp it. (An earlier version used much bigger numbers and it
+ * let a mediocre-but-young MLB player outscore genuinely good performers
+ * purely on youth — these values were recalibrated after seeing that.)
  */
-export const LEVEL_WEIGHT = 1.2 // multiplies LEVEL_FACTOR (0-1) — full MLB-to-DSL gap ≈ 0.9
-export const AGE_WEIGHT = 0.12 // multiplied by years young/old for level — a 5yr gap ≈ 0.6
+export const LEVEL_WEIGHT = 0.3 // multiplies LEVEL_FACTOR (0-1) — full MLB-to-DSL gap ≈ 0.23
+export const AGE_WEIGHT = 0.03 // multiplied by years young/old for level, capped below
+const MAX_AGE_BONUS = 0.3 // no single age gap (however extreme) can swing more than this
 
 /**
  * Composite Hitter Score (0-100ish scale, uncapped) used to rank position
@@ -85,7 +86,7 @@ function zScores(nums: (number | null | undefined)[]) {
 function levelAgeBonus(level: HitterSeasonStats['level'], age: number): number {
   const levelBonus = LEVEL_WEIGHT * (LEVEL_FACTOR[level] ?? 0.5)
   const ageDelta = age - (LEVEL_AVG_AGE[level] ?? 22) // positive = older than typical for level
-  const ageBonus = -AGE_WEIGHT * ageDelta // younger-for-level => positive bonus
+  const ageBonus = Math.max(-MAX_AGE_BONUS, Math.min(MAX_AGE_BONUS, -AGE_WEIGHT * ageDelta)) // younger-for-level => positive bonus, capped
   return levelBonus + ageBonus
 }
 
