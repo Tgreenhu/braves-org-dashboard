@@ -7,6 +7,7 @@ import {
   ListOrdered,
   UploadCloud,
   PenLine,
+  RefreshCw,
 } from 'lucide-react'
 import OrgOverview from '@/pages/OrgOverview'
 import Players from '@/pages/Players'
@@ -16,6 +17,7 @@ import Top30 from '@/pages/Top30'
 import Upload from '@/pages/Upload'
 import Writer from '@/pages/Writer'
 import { supabaseConfigured } from '@/lib/supabaseClient'
+import { cacheClear } from '@/lib/cache'
 
 const TABS = [
   { id: 'overview', label: 'Org Overview', short: 'Overview', icon: LayoutGrid, Component: OrgOverview },
@@ -49,11 +51,14 @@ export default function App() {
               </p>
             </div>
           </div>
-          {!supabaseConfigured && (
-            <span className="rounded-full border border-brave-gold/40 bg-brave-gold/10 px-2.5 py-1 text-[10px] font-medium text-brave-gold sm:text-xs">
-              Supabase not connected
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {!supabaseConfigured && (
+              <span className="rounded-full border border-brave-gold/40 bg-brave-gold/10 px-2.5 py-1 text-[10px] font-medium text-brave-gold sm:text-xs">
+                Supabase not connected
+              </span>
+            )}
+            <RefreshDataButton />
+          </div>
         </div>
         {/* Desktop tab row */}
         <nav className="mx-auto hidden max-w-7xl gap-1 px-6 sm:flex">
@@ -115,5 +120,26 @@ function TomahawkMark() {
         strokeWidth="1"
       />
     </svg>
+  )
+}
+
+function RefreshDataButton() {
+  const [justRefreshed, setJustRefreshed] = useState(false)
+
+  const handleRefresh = () => {
+    cacheClear() // wipes the local cache — needed because data can now change from outside the app (manual SQL, the standings/position automations), which this browser has no other way of knowing about
+    setJustRefreshed(true)
+    setTimeout(() => window.location.reload(), 400)
+  }
+
+  return (
+    <button
+      onClick={handleRefresh}
+      title="Clear cached data and reload — use this after editing the database directly (SQL, automations) so the app picks up the changes"
+      className="flex items-center gap-1.5 rounded-full border border-white/15 px-2.5 py-1 text-[10px] font-medium text-white/70 transition hover:border-white/30 hover:text-white sm:text-xs"
+    >
+      <RefreshCw size={12} className={justRefreshed ? 'animate-spin' : ''} />
+      <span className="hidden sm:inline">{justRefreshed ? 'Refreshing…' : 'Refresh Data'}</span>
+    </button>
   )
 }
