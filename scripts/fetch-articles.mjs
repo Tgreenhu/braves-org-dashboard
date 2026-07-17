@@ -35,7 +35,7 @@ if (nyHour !== 8 && process.env.FORCE_RUN !== 'true') {
 
 const JUST_BASEBALL_FEED = 'https://www.justbaseball.com/author/taylorgreenhut/feed/'
 const BRAVES_TODAY_FEED = 'https://bravestoday.substack.com/feed'
-const AUTHOR_NAME_MATCH = /greenhut|tgod176/i // used to filter Braves Today's multi-author feed down to this author
+const AUTHOR_NAME_MATCH = /\btaylor\b|greenhut|tgod176/i // byline reads just "Taylor" (confirmed from a real published post), keeping the others as fallback in case the feed formats it differently
 
 async function main() {
   const [justBaseballArticles, bravesTodayArticles] = await Promise.all([
