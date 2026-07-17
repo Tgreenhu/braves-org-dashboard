@@ -191,7 +191,9 @@ function SlotRow({ slot }: { slot: OrgTeamSlot }) {
                 {player.era?.toFixed(2) ?? '—'} ERA / {player.fip?.toFixed(2) ?? '—'} FIP
               </span>
             ) : (
-              <span>{player.ops?.toFixed(3) ?? '—'} OPS</span>
+              <span>
+                {player.ops?.toFixed(3) ?? '—'} OPS / {player.wrcPlus ?? '—'} wRC+
+              </span>
             )}
             {score !== null && (
               <div className="text-[10px] text-navy-900/40">score {score.toFixed(2)}</div>
