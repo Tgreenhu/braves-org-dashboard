@@ -11,7 +11,21 @@ import { LEVEL_FACTOR, LEVEL_AVG_AGE } from '@/lib/levelBaselines'
  */
 export const LEVEL_WEIGHT = 0.3 // multiplies LEVEL_FACTOR (0-1) — full MLB-to-DSL gap ≈ 0.23
 export const AGE_WEIGHT = 0.03 // multiplied by years young/old for level, capped below
-const MAX_AGE_BONUS = 0.3 // no single age gap (however extreme) can swing more than this
+const MAX_AGE_BONUS = 0.3 // no single relative-age gap (however extreme) can swing more than this
+
+/**
+ * Separate from the relative "young/old for level" bonus above — this
+ * rewards being notably young in ABSOLUTE terms (not just relative to
+ * level peers), so a 16-year-old standout in the DSL can still outrank an
+ * older, higher-level player with similar-but-slightly-better numbers
+ * (e.g. a 27-year-old in AAA). Zero for anyone 20 or older, so it never
+ * touches typical MLB/AAA/AA comparisons — those are decided by level and
+ * performance as normal. Capped so it can tip a close call, not flood the
+ * rankings with every complex-leaguer regardless of performance.
+ */
+const ABSOLUTE_YOUTH_THRESHOLD = 20
+const ABSOLUTE_YOUTH_WEIGHT = 0.12 // per year under the threshold
+const MAX_ABSOLUTE_YOUTH_BONUS = 0.6
 
 /**
  * Composite Hitter Score (0-100ish scale, uncapped) used to rank position
@@ -82,12 +96,19 @@ function zScores(nums: (number | null | undefined)[]) {
   return nums.map((n) => (n == null || Number.isNaN(n) ? 0 : (n - m) / sd))
 }
 
-/** Level prestige + age-for-level bonus, shared by both scoreHitters and scorePitchers. */
+/** Level prestige + age-for-level bonus + absolute-youth bonus, shared by both scoreHitters and scorePitchers. */
 function levelAgeBonus(level: HitterSeasonStats['level'], age: number): number {
   const levelBonus = LEVEL_WEIGHT * (LEVEL_FACTOR[level] ?? 0.5)
+
   const ageDelta = age - (LEVEL_AVG_AGE[level] ?? 22) // positive = older than typical for level
-  const ageBonus = Math.max(-MAX_AGE_BONUS, Math.min(MAX_AGE_BONUS, -AGE_WEIGHT * ageDelta)) // younger-for-level => positive bonus, capped
-  return levelBonus + ageBonus
+  const relativeAgeBonus = Math.max(-MAX_AGE_BONUS, Math.min(MAX_AGE_BONUS, -AGE_WEIGHT * ageDelta))
+
+  const absoluteYouthBonus = Math.min(
+    MAX_ABSOLUTE_YOUTH_BONUS,
+    Math.max(0, ABSOLUTE_YOUTH_THRESHOLD - age) * ABSOLUTE_YOUTH_WEIGHT,
+  )
+
+  return levelBonus + relativeAgeBonus + absoluteYouthBonus
 }
 
 export interface ScoredPlayer<T> {
