@@ -70,8 +70,10 @@ export default function AllOrgTeam() {
         <p className="text-xs text-navy-900/50 sm:text-sm">
           Qualified players only — minimum {MIN_PA} PA for position players, {MIN_IP.toFixed(1)} IP
           for pitchers — ranked by composite score: wRC+, OPS, OBP/AVG/SLG &amp; BB:K for hitters;
-          FIP, SIERA, ERA, WHIP &amp; K:BB for pitchers. See <code>src/lib/scoring.ts</code> for the
-          exact weighting.
+          FIP, SIERA, ERA, WHIP &amp; K:BB for pitchers; plus a level bonus (MLB production counts
+          for more than the same line in the low minors) and an age-for-level bonus (young for your
+          level beats merely-adequate and old). See <code>src/lib/scoring.ts</code> for the exact
+          weighting.
         </p>
       </div>
 
