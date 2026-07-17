@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Inbox } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { fetchHitters, fetchPitchers } from '@/lib/queries'
+import { fetchHitters, fetchPitchers, fetchTeamGamesByLevel } from '@/lib/queries'
 import { supabaseConfigured } from '@/lib/supabaseClient'
 import { CURRENT_SEASON } from '@/lib/constants'
 import { buildAllOrgTeams, primaryPosition, type OrgTeam, type OrgTeamSlot } from '@/lib/allOrgTeam'
@@ -20,11 +20,24 @@ export default function AllOrgTeam() {
   const [sampleHitters, setSampleHitters] = useState<HitterSeasonStats[]>([])
 
   useEffect(() => {
-    Promise.all([fetchHitters([CURRENT_SEASON]), fetchPitchers([CURRENT_SEASON])]).then(
-      ([hitters, pitchers]) => {
+    Promise.all([fetchHitters([CURRENT_SEASON]), fetchPitchers([CURRENT_SEASON]), fetchTeamGamesByLevel()]).then(
+      ([hitters, pitchers, teamGamesByLevel]) => {
         setHasAnyData(hitters.length > 0 || pitchers.length > 0)
         setSampleHitters(hitters)
-        setTeams(buildAllOrgTeams(hitters, pitchers))
+
+        // Qualified only — 3.1 PA per scheduled team game for hitters, 1.0
+        // IP per scheduled team game for pitchers, to keep tiny-sample
+        // outliers (a September call-up with 4 PA, e.g.) out of the running.
+        const qualifiedHitters = hitters.filter((h) => {
+          const teamGames = teamGamesByLevel[h.level] ?? 130
+          return h.pa >= 3.1 * teamGames
+        })
+        const qualifiedPitchers = pitchers.filter((p) => {
+          const teamGames = teamGamesByLevel[p.level] ?? 130
+          return p.ip >= 1.0 * teamGames
+        })
+
+        setTeams(buildAllOrgTeams(qualifiedHitters, qualifiedPitchers))
       },
     )
   }, [])
@@ -42,9 +55,10 @@ export default function AllOrgTeam() {
       <div>
         <h2 className="text-lg font-semibold text-navy-900 sm:text-xl">All-Organization Teams</h2>
         <p className="text-xs text-navy-900/50 sm:text-sm">
-          Ranked by composite score — wRC+, OPS, OBP/AVG/SLG &amp; BB:K for hitters; FIP, SIERA,
-          ERA, WHIP &amp; K:BB for pitchers. See <code>src/lib/scoring.ts</code> for the exact
-          weighting.
+          Qualified players only — 3.1 PA per scheduled team game for position players, 1.0 IP per
+          scheduled team game for pitchers — ranked by composite score: wRC+, OPS, OBP/AVG/SLG &amp;
+          BB:K for hitters; FIP, SIERA, ERA, WHIP &amp; K:BB for pitchers. See{' '}
+          <code>src/lib/scoring.ts</code> for the exact weighting.
         </p>
       </div>
 
