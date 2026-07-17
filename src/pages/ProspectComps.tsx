@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Legend, ResponsiveContainer } from 'recharts'
 import { Loader2, Inbox, Search, X, ChevronDown } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
 import { fetchEligibleProspects, fetchProspectCompPool, fetchAvailableSeasons, type CompPoolHitterRow, type CompPoolPitcherRow } from '@/lib/queries'
 import { supabaseConfigured } from '@/lib/supabaseClient'
 import { CURRENT_SEASON } from '@/lib/constants'
+import { useClickOutside } from '@/lib/useClickOutside'
 import { getHitterComps, getPitcherComps, type ProspectComp } from '@/lib/prospectComps'
 import { ORG_LEVELS, type HitterSeasonStats, type PitcherSeasonStats, type OrgLevel } from '@/types'
 
@@ -193,6 +194,8 @@ function ProspectSearch({
 }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  useClickOutside(wrapperRef, () => setOpen(false), open)
 
   const selectedPlayer =
     hitters.find((h) => h.playerId === selectedId) ?? pitchers.find((p) => p.playerId === selectedId)
@@ -207,7 +210,7 @@ function ProspectSearch({
   }, [query, hitters, pitchers])
 
   return (
-    <div className="relative sm:max-w-sm">
+    <div className="relative sm:max-w-sm" ref={wrapperRef}>
       <div className="relative">
         <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-navy-950/30" />
         <input
@@ -221,16 +224,8 @@ function ProspectSearch({
             setOpen(true)
           }}
           placeholder="Type a player's name…"
-          className="w-full rounded-lg border border-navy-950/10 py-2 pl-8 pr-7 text-sm"
+          className="w-full rounded-lg border border-navy-950/10 py-2 pl-8 pr-3 text-sm"
         />
-        {open && (
-          <button
-            onClick={() => setOpen(false)}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-navy-950/30 hover:text-navy-900"
-          >
-            <X size={14} />
-          </button>
-        )}
       </div>
       {open && (
         <div className="absolute z-20 mt-1 max-h-64 w-full space-y-0.5 overflow-auto rounded-lg border border-navy-950/10 bg-white p-1.5 shadow-lg">
@@ -271,11 +266,13 @@ function MultiSelectFilter({
   onChange: (v: string[]) => void
 }) {
   const [open, setOpen] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  useClickOutside(wrapperRef, () => setOpen(false), open)
   const toggle = (opt: string) => {
     onChange(selected.includes(opt) ? selected.filter((o) => o !== opt) : [...selected, opt])
   }
   return (
-    <div className="relative">
+    <div className="relative" ref={wrapperRef}>
       <button onClick={() => setOpen((o) => !o)} className="pill-button" data-active={selected.length > 0}>
         {label}
         {selected.length > 0 && <span className="ml-1 rounded-full bg-white/20 px-1.5 text-[10px]">{selected.length}</span>}

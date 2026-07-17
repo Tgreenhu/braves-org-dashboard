@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpDown, ChevronDown, ChevronUp, Loader2, Inbox, X } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { fetchHitters, fetchPitchers, fetchAvailableSeasons, fetchTeamGamesByLevel } from '@/lib/queries'
+import { fetchHitters, fetchPitchers, fetchAvailableSeasons, fetchTeamGamesByLevel, updateHitterPosition, updatePitcherPosition } from '@/lib/queries'
+import { cacheClear } from '@/lib/cache'
 import { supabaseConfigured } from '@/lib/supabaseClient'
 import { CURRENT_SEASON } from '@/lib/constants'
+import { useClickOutside } from '@/lib/useClickOutside'
 import { ORG_LEVELS, type HitterSeasonStats, type PitcherSeasonStats, type OrgLevel } from '@/types'
 
 type PlayerMode = 'Hitter' | 'Pitcher'
@@ -14,6 +16,9 @@ const HITTER_VIEWS: HitterView[] = ['Standard', 'Batted Ball', 'Statcast', 'Bat 
 const PITCHER_VIEWS: PitcherView[] = ['Standard', 'Batted Ball', 'Statcast', 'Pitch Grades']
 
 type Col<T> = { key: keyof T; label: string; numeric?: boolean; fmt?: (v: any) => string }
+
+const HITTER_POSITION_OPTIONS = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'DH']
+const PITCHER_POSITION_OPTIONS = ['SP', 'RP']
 
 const pct = (v: any) => (v == null ? '—' : `${Number(v).toFixed(2)}%`)
 const dec3 = (v: any) => (v == null ? '—' : Number(v).toFixed(3))
@@ -210,6 +215,18 @@ export default function Players() {
     }
   }
 
+  const handlePositionEdit = async (row: HitterSeasonStats | PitcherSeasonStats, newPosition: string) => {
+    if (row.season !== CURRENT_SEASON) return // only current-season rows can be edited
+    if (mode === 'Hitter') {
+      await updateHitterPosition(row.dbId, newPosition)
+      setHitters((prev) => prev?.map((h) => (h.dbId === row.dbId ? { ...h, position: newPosition as any } : h)) ?? prev)
+    } else {
+      await updatePitcherPosition(row.dbId, newPosition)
+      setPitchers((prev) => prev?.map((p) => (p.dbId === row.dbId ? { ...p, position: newPosition as any } : p)) ?? prev)
+    }
+    cacheClear() // otherwise other tabs (All-Org Team, Top 30) keep serving the stale cached position
+  }
+
   const switchMode = (m: PlayerMode) => {
     setMode(m)
     setSortKey(m === 'Hitter' ? 'ops' : 'era')
@@ -357,7 +374,28 @@ export default function Players() {
                 {rows.map((row: any) => (
                   <tr key={`${row.playerId}-${row.season}`}>
                     {columns.map((col) => (
-                      <td key={String(col.key)}>{col.fmt ? col.fmt(row[col.key]) : (row[col.key] ?? '—')}</td>
+                      <td key={String(col.key)}>
+                        {col.key === 'position' && row.season === CURRENT_SEASON ? (
+                          <select
+                            value={row.position ?? ''}
+                            onChange={(e) => handlePositionEdit(row, e.target.value)}
+                            className="rounded border border-navy-950/10 bg-white px-1 py-0.5 text-xs"
+                          >
+                            <option value="" disabled>
+                              —
+                            </option>
+                            {(mode === 'Hitter' ? HITTER_POSITION_OPTIONS : PITCHER_POSITION_OPTIONS).map((p) => (
+                              <option key={p} value={p}>
+                                {p}
+                              </option>
+                            ))}
+                          </select>
+                        ) : col.fmt ? (
+                          col.fmt(row[col.key])
+                        ) : (
+                          row[col.key] ?? '—'
+                        )}
+                      </td>
                     ))}
                   </tr>
                 ))}
@@ -399,11 +437,13 @@ function MultiSelectFilter({
   onChange: (v: string[]) => void
 }) {
   const [open, setOpen] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  useClickOutside(wrapperRef, () => setOpen(false), open)
   const toggle = (opt: string) => {
     onChange(selected.includes(opt) ? selected.filter((o) => o !== opt) : [...selected, opt])
   }
   return (
-    <div className="relative">
+    <div className="relative" ref={wrapperRef}>
       <button onClick={() => setOpen((o) => !o)} className="pill-button" data-active={selected.length > 0}>
         {label}
         {selected.length > 0 && (

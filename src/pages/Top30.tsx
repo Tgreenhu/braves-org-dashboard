@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -29,6 +29,7 @@ import {
 import DownloadableCard from '@/components/shared/DownloadableCard'
 import { fetchCombinedPlayerPool, type PoolPlayer } from '@/lib/queries'
 import { supabaseConfigured } from '@/lib/supabaseClient'
+import { useClickOutside } from '@/lib/useClickOutside'
 import {
   loadWorkingList,
   loadWorkingBucket,
@@ -440,6 +441,9 @@ function DatabaseSearch({
   onSelect: (player: PoolPlayer) => void
 }) {
   const [query, setQuery] = useState('')
+  const [focused, setFocused] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  useClickOutside(wrapperRef, () => setFocused(false), focused)
 
   const results = useMemo(() => {
     if (!query.trim()) return []
@@ -448,17 +452,18 @@ function DatabaseSearch({
   }, [query, pool])
 
   return (
-    <div className="relative">
+    <div className="relative" ref={wrapperRef}>
       <div className="relative">
         <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-navy-950/30" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setFocused(true)}
           placeholder="Search players already in the database…"
           className="w-full rounded-lg border border-navy-950/10 py-2 pl-8 pr-3 text-sm sm:max-w-md"
         />
       </div>
-      {query.trim() && (
+      {focused && query.trim() && (
         <div className="mt-1.5 max-h-64 space-y-1 overflow-auto rounded-lg border border-navy-950/10 bg-white p-1.5 shadow-sm sm:max-w-md">
           {results.length === 0 && (
             <p className="px-2 py-2 text-xs text-navy-900/40">No match. Switch to "Add manually" if this player isn't in the database yet.</p>
@@ -472,6 +477,7 @@ function DatabaseSearch({
                 onClick={() => {
                   onSelect(p)
                   setQuery('')
+                  setFocused(false)
                 }}
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-brave-cream disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -583,6 +589,20 @@ function PlayerCardVisual({
     entry.source === 'manual' && dbPool
       ? dbPool.find((p) => p.name.trim().toLowerCase() === entry.name.trim().toLowerCase())
       : undefined
+
+  // For display purposes only (not the "link" logic above) — look up this
+  // player's stat line whether they're already linked or not, so both
+  // database and not-yet-linked-but-matching manual entries show it.
+  const poolEntry = entry.playerId
+    ? dbPool?.find((p) => p.playerId === entry.playerId)
+    : dbPool?.find((p) => p.name.trim().toLowerCase() === entry.name.trim().toLowerCase())
+
+  const statLine = poolEntry
+    ? poolEntry.playerType === 'Hitter'
+      ? `${poolEntry.age} yo · ${poolEntry.level} · ${poolEntry.position} · AVG ${poolEntry.avg?.toFixed(3) ?? '—'} · OPS ${poolEntry.ops?.toFixed(3) ?? '—'} · wRC+ ${poolEntry.wrcPlus ?? '—'} · BB:K ${poolEntry.bbPct?.toFixed(1) ?? '—'}:${poolEntry.kPct?.toFixed(1) ?? '—'}`
+      : `${poolEntry.age} yo · ${poolEntry.level} · ${poolEntry.throws ?? '?'}HP · ERA ${poolEntry.era?.toFixed(2) ?? '—'} · FIP ${poolEntry.fip?.toFixed(2) ?? '—'} · SIERA ${poolEntry.siera?.toFixed(2) ?? '—'} · K:BB ${poolEntry.kbbPct?.toFixed(1) ?? '—'}%`
+    : `${entry.position} · Age ${entry.age}`
+
   const rankDelta = previousRank != null && entry.rank != null ? previousRank - entry.rank : null
 
   return (
@@ -601,9 +621,7 @@ function PlayerCardVisual({
               </span>
             )}
           </div>
-          <div className="text-[11px] text-navy-900/45">
-            {entry.position} · Age {entry.age}
-          </div>
+          <div className="text-[11px] text-navy-900/45">{statLine}</div>
         </div>
         {previousRank !== undefined && (
           <div className="shrink-0 text-right">

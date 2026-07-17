@@ -4,7 +4,7 @@ import DownloadableCard from '@/components/shared/DownloadableCard'
 import { fetchHitters, fetchPitchers } from '@/lib/queries'
 import { supabaseConfigured } from '@/lib/supabaseClient'
 import { CURRENT_SEASON } from '@/lib/constants'
-import { buildAllOrgTeams, type OrgTeam, type OrgTeamSlot } from '@/lib/allOrgTeam'
+import { buildAllOrgTeams, primaryPosition, type OrgTeam, type OrgTeamSlot } from '@/lib/allOrgTeam'
 import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
 
 const TEAM_LABEL = { 1: 'First Team', 2: 'Second Team', 3: 'Third Team' } as const
@@ -17,15 +17,25 @@ function isPitcher(p: HitterSeasonStats | PitcherSeasonStats): p is PitcherSeaso
 export default function AllOrgTeam() {
   const [teams, setTeams] = useState<OrgTeam[] | null>(null)
   const [hasAnyData, setHasAnyData] = useState(false)
+  const [sampleHitters, setSampleHitters] = useState<HitterSeasonStats[]>([])
 
   useEffect(() => {
     Promise.all([fetchHitters([CURRENT_SEASON]), fetchPitchers([CURRENT_SEASON])]).then(
       ([hitters, pitchers]) => {
         setHasAnyData(hitters.length > 0 || pitchers.length > 0)
+        setSampleHitters(hitters)
         setTeams(buildAllOrgTeams(hitters, pitchers))
       },
     )
   }, [])
+
+  // If every position-player slot came up empty despite having hitters,
+  // something's off with how "position" is being read — show what's
+  // actually in the data instead of guessing again.
+  const allPositionSlotsEmpty =
+    teams !== null &&
+    sampleHitters.length > 0 &&
+    teams.every((t) => [...t.infielders, ...t.outfielders, t.catcher].every((s) => s.player === null))
 
   return (
     <div className="space-y-4">
@@ -37,6 +47,27 @@ export default function AllOrgTeam() {
           weighting.
         </p>
       </div>
+
+      {allPositionSlotsEmpty && (
+        <div className="card border-l-4 border-brave-gold p-3 text-xs sm:p-4">
+          <p className="mb-2 font-semibold text-navy-950">
+            Every infield/outfield/catcher slot came up empty even though {sampleHitters.length}{' '}
+            hitters were found — that means the "position" field itself is likely blank in the
+            database, not a matching bug. Here's what's actually stored for the first 10:
+          </p>
+          <div className="space-y-0.5 font-mono text-[11px] text-navy-900/70">
+            {sampleHitters.slice(0, 10).map((h) => (
+              <div key={h.playerId}>
+                {h.name}: position="{h.position ?? 'null'}" → reads as "{primaryPosition(h.position) || '(empty)'}"
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-navy-900/50">
+            If these all say "null" or "(empty)", send this to Claude — it means the "Pos" column
+            isn't being found in your Fangraphs CSVs and the mapping needs adjusting.
+          </p>
+        </div>
+      )}
 
       {teams === null ? (
         <div className="flex items-center justify-center gap-2 py-16 text-sm text-navy-900/40">

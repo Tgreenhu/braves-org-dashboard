@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ExternalLink,
   Plus,
@@ -25,6 +25,7 @@ import {
   type WriterExpenseRow,
 } from '@/lib/queries'
 import { supabaseConfigured } from '@/lib/supabaseClient'
+import { useClickOutside } from '@/lib/useClickOutside'
 
 const TAX_RATE = 0.3
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -441,11 +442,13 @@ function MultiSelectFilter({
   onChange: (v: string[]) => void
 }) {
   const [open, setOpen] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  useClickOutside(wrapperRef, () => setOpen(false), open)
   const toggle = (opt: string) => {
     onChange(selected.includes(opt) ? selected.filter((o) => o !== opt) : [...selected, opt])
   }
   return (
-    <div className="relative">
+    <div className="relative" ref={wrapperRef}>
       <button onClick={() => setOpen((o) => !o)} className="pill-button" data-active={selected.length > 0}>
         {label}
         {selected.length > 0 && <span className="ml-1 rounded-full bg-white/20 px-1.5 text-[10px]">{selected.length}</span>}

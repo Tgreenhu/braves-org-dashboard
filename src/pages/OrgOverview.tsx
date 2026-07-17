@@ -50,7 +50,7 @@ export default function OrgOverview() {
           }
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4">
           {records.map((rec) => (
             <LevelCard key={rec.level} record={rec} />
           ))}
