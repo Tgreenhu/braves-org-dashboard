@@ -1,4 +1,16 @@
 import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
+import { LEVEL_FACTOR, LEVEL_AVG_AGE } from '@/lib/levelBaselines'
+
+/**
+ * How much level and age-for-level shift the composite score, on top of
+ * the pure stat-based z-score below. Both are additive bonuses/penalties
+ * in the same rough units as the stat score itself (which typically spans
+ * about -2 to +2), so a full level's difference or a several-year age gap
+ * can meaningfully move the ranking without completely overriding a much
+ * better stat line. Tune these two numbers first if the balance feels off.
+ */
+export const LEVEL_WEIGHT = 1.2 // multiplies LEVEL_FACTOR (0-1) — full MLB-to-DSL gap ≈ 0.9
+export const AGE_WEIGHT = 0.12 // multiplied by years young/old for level — a 5yr gap ≈ 0.6
 
 /**
  * Composite Hitter Score (0-100ish scale, uncapped) used to rank position
@@ -69,6 +81,14 @@ function zScores(nums: (number | null | undefined)[]) {
   return nums.map((n) => (n == null || Number.isNaN(n) ? 0 : (n - m) / sd))
 }
 
+/** Level prestige + age-for-level bonus, shared by both scoreHitters and scorePitchers. */
+function levelAgeBonus(level: HitterSeasonStats['level'], age: number): number {
+  const levelBonus = LEVEL_WEIGHT * (LEVEL_FACTOR[level] ?? 0.5)
+  const ageDelta = age - (LEVEL_AVG_AGE[level] ?? 22) // positive = older than typical for level
+  const ageBonus = -AGE_WEIGHT * ageDelta // younger-for-level => positive bonus
+  return levelBonus + ageBonus
+}
+
 export interface ScoredPlayer<T> {
   player: T
   score: number
@@ -93,7 +113,8 @@ export function scoreHitters(hitters: HitterSeasonStats[]): ScoredPlayer<HitterS
         z.obp[i] * HITTER_WEIGHTS.obp +
         z.avg[i] * HITTER_WEIGHTS.avg +
         z.slg[i] * HITTER_WEIGHTS.slg +
-        z.bbKRatio[i] * HITTER_WEIGHTS.bbKRatio,
+        z.bbKRatio[i] * HITTER_WEIGHTS.bbKRatio +
+        levelAgeBonus(player.level, player.age),
     }))
     .sort((a, b) => b.score - a.score)
 }
@@ -116,7 +137,8 @@ export function scorePitchers(pitchers: PitcherSeasonStats[]): ScoredPlayer<Pitc
         z.siera[i] * PITCHER_WEIGHTS.siera +
         z.era[i] * PITCHER_WEIGHTS.era +
         z.whip[i] * PITCHER_WEIGHTS.whip +
-        z.kbbRatio[i] * PITCHER_WEIGHTS.kbbRatio,
+        z.kbbRatio[i] * PITCHER_WEIGHTS.kbbRatio +
+        levelAgeBonus(player.level, player.age),
     }))
     .sort((a, b) => b.score - a.score)
 }
