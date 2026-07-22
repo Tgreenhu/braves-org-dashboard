@@ -4,7 +4,15 @@ import DownloadableCard from '@/components/shared/DownloadableCard'
 import { fetchHitters, fetchPitchers } from '@/lib/queries'
 import { supabaseConfigured } from '@/lib/supabaseClient'
 import { CURRENT_SEASON } from '@/lib/constants'
-import { buildAllOrgTeams, primaryPosition, OUTFIELD_POS, type OrgTeam, type OrgTeamSlot } from '@/lib/allOrgTeam'
+import {
+  buildAllOrgTeams,
+  primaryPosition,
+  OUTFIELD_POS,
+  combineHittersAcrossLevels,
+  combinePitchersAcrossLevels,
+  type OrgTeam,
+  type OrgTeamSlot,
+} from '@/lib/allOrgTeam'
 import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
 
 const TEAM_LABEL = { 1: 'First Team', 2: 'Second Team', 3: 'Third Team' } as const
@@ -31,9 +39,16 @@ export default function AllOrgTeam() {
 
   useEffect(() => {
     Promise.all([fetchHitters([CURRENT_SEASON]), fetchPitchers([CURRENT_SEASON])]).then(
-      ([hitters, pitchers]) => {
-        setHasAnyData(hitters.length > 0 || pitchers.length > 0)
-        setSampleHitters(hitters)
+      ([rawHitters, rawPitchers]) => {
+        setHasAnyData(rawHitters.length > 0 || rawPitchers.length > 0)
+        setSampleHitters(rawHitters)
+
+        // Combine multi-level stints into one row per player FIRST — a
+        // player who split time (e.g. 5 IP at AAA + 8 IP at MLB) should
+        // qualify off their real 13 IP total, not get wrongly excluded
+        // because neither individual stint alone cleared the bar.
+        const hitters = combineHittersAcrossLevels(rawHitters)
+        const pitchers = combinePitchersAcrossLevels(rawPitchers)
 
         // Qualified only — minimum 60 PA for hitters, 10.0 IP for pitchers,
         // to filter out tiny-sample-size outliers while still keeping a
