@@ -8,6 +8,7 @@ import {
   UploadCloud,
   PenLine,
   RefreshCw,
+  TrendingUp,
 } from 'lucide-react'
 import OrgOverview from '@/pages/OrgOverview'
 import Players from '@/pages/Players'
@@ -15,6 +16,7 @@ import AllOrgTeam from '@/pages/AllOrgTeam'
 import ProspectComps from '@/pages/ProspectComps'
 import Top30 from '@/pages/Top30'
 import Upload from '@/pages/Upload'
+import MLBDev from '@/pages/MLBDev'
 import Writer from '@/pages/Writer'
 import { supabaseConfigured } from '@/lib/supabaseClient'
 import { cacheClear } from '@/lib/cache'
@@ -26,6 +28,7 @@ const TABS = [
   { id: 'prospects', label: 'Prospect Comps', short: 'Comps', icon: Radar, Component: ProspectComps },
   { id: 'top30', label: 'My Top 50', short: 'Top 50', icon: ListOrdered, Component: Top30 },
   { id: 'upload', label: 'Upload', short: 'Upload', icon: UploadCloud, Component: Upload },
+  { id: 'mlb-dev', label: 'MLB Dev', short: 'MLB Dev', icon: TrendingUp, Component: MLBDev },
   { id: 'writer', label: 'Writer', short: 'Writer', icon: PenLine, Component: Writer },
 ] as const
 
