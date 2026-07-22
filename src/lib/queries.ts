@@ -1,7 +1,7 @@
 import { supabase, supabaseConfigured } from '@/lib/supabaseClient'
 import { cachedFetch } from '@/lib/cache'
 import { CURRENT_SEASON } from '@/lib/constants'
-import type { HitterSeasonStats, PitcherSeasonStats, TeamLevelRecord, OrgLevel } from '@/types'
+import type { HitterSeasonStats, PitcherSeasonStats, TeamLevelRecord, OrgLevel, Top30Entry, Top30Snapshot } from '@/types'
 import { ORG_LEVELS } from '@/types'
 
 // =====================================================================
@@ -373,6 +373,76 @@ export async function upsertDevCareerWar(
     })),
     { onConflict: 'name' },
   )
+}
+
+// =====================================================================
+// Tab 5: My Top 30/50 — real persistence (was localStorage-only before,
+// which meant a "Refresh Data" click could wipe it; see lib/top30History.ts)
+// =====================================================================
+
+export async function fetchTop30List(): Promise<Top30Entry[]> {
+  if (!supabaseConfigured) return []
+  const { data, error } = await supabase.from('top_30_list').select('*').order('sort_order')
+  if (error || !data) return []
+  return data.map((r: any) => ({
+    id: r.id,
+    rank: r.rank,
+    name: r.name,
+    position: r.position,
+    age: r.age,
+    playerId: r.player_id,
+    source: r.source,
+  }))
+}
+
+/**
+ * Full replace — deletes everything currently in top_30_list and reinserts
+ * the given list+bucket. Simpler and safer than diffing individual row
+ * changes for a list this small, and it's only called after a discrete
+ * user action (add/remove/link/reorder), not on every keystroke.
+ */
+export async function saveTop30List(list: Top30Entry[], bucket: Top30Entry[]) {
+  const { error: deleteError } = await supabase.from('top_30_list').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+  if (deleteError) return { error: deleteError }
+
+  const allRows = [...list, ...bucket].map((e, i) => ({
+    id: e.id,
+    rank: e.rank,
+    name: e.name,
+    position: e.position,
+    age: e.age,
+    player_id: e.playerId,
+    source: e.source,
+    sort_order: i,
+  }))
+  if (allRows.length === 0) return { error: null }
+  return supabase.from('top_30_list').insert(allRows)
+}
+
+export async function fetchTop30Snapshots(): Promise<Top30Snapshot[]> {
+  if (!supabaseConfigured) return []
+  const { data, error } = await supabase.from('top_30_snapshots').select('*').order('submitted_at', { ascending: false })
+  if (error || !data) return []
+  return data.map((r: any) => ({
+    id: r.id,
+    submittedAt: r.submitted_at,
+    list: r.list,
+    bucket: r.bucket,
+  }))
+}
+
+export async function createTop30Snapshot(list: Top30Entry[], bucket: Top30Entry[]): Promise<Top30Snapshot | null> {
+  const { data, error } = await supabase
+    .from('top_30_snapshots')
+    .insert({ list, bucket })
+    .select()
+    .single()
+  if (error || !data) return null
+  return { id: data.id, submittedAt: data.submitted_at, list: data.list, bucket: data.bucket }
+}
+
+export async function deleteTop30Snapshot(id: string) {
+  return supabase.from('top_30_snapshots').delete().eq('id', id)
 }
 
 /** Tab 1: one row per affiliate, sorted MLB → DSL. Deliberately NOT cached
