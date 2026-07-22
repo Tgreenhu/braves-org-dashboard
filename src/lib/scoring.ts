@@ -31,6 +31,15 @@ const ABSOLUTE_YOUTH_THRESHOLD = 20
 const ABSOLUTE_YOUTH_WEIGHT = 0.012 // per (year under threshold)²
 const MAX_ABSOLUTE_YOUTH_BONUS = 0.4
 
+/** Slight starter bump — total gap between an SP and an RP with identical stats/level/age. Deliberately small relative to the stat weights below. */
+const ROLE_GAP = 0.15
+function roleBonus(position: string | null | undefined): number {
+  const primary = (position ?? '').split(/[\/,]/)[0].trim().toUpperCase()
+  if (primary === 'SP') return ROLE_GAP / 2
+  if (primary === 'RP') return -ROLE_GAP / 2
+  return 0
+}
+
 /**
  * Composite Hitter Score (0-100ish scale, uncapped) used to rank position
  * players for the All-Organization Teams (Tab 3).
@@ -182,9 +191,10 @@ export function scorePitchers(pitchers: PitcherSeasonStats[]): ScoredPlayer<Pitc
       const whipW = z.whip[i] * PITCHER_WEIGHTS.whip
       const kbbW = z.kbbRatio[i] * PITCHER_WEIGHTS.kbbRatio
       const { levelBonus, relativeAgeBonus, absoluteYouthBonus } = levelAgeBonus(player.level, player.age)
+      const roleW = roleBonus(player.position)
       return {
         player,
-        score: fipW + sieraW + eraW + whipW + kbbW + levelBonus + relativeAgeBonus + absoluteYouthBonus,
+        score: fipW + sieraW + eraW + whipW + kbbW + levelBonus + relativeAgeBonus + absoluteYouthBonus + roleW,
         breakdown: {
           FIP: fipW,
           SIERA: sieraW,
@@ -194,6 +204,7 @@ export function scorePitchers(pitchers: PitcherSeasonStats[]): ScoredPlayer<Pitc
           Level: levelBonus,
           'Age (rel)': relativeAgeBonus,
           'Age (abs youth)': absoluteYouthBonus,
+          'Role (SP/RP)': roleW,
         },
       }
     })
