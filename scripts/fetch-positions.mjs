@@ -39,15 +39,10 @@ if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   process.exit(1)
 }
 
-const nyHour = Number(
-  new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }).format(
-    new Date(),
-  ),
-)
-if (nyHour !== 8 && process.env.FORCE_RUN !== 'true') {
-  console.log(`Skipping — it's ${nyHour}:00 in New York, not 8am.`)
-  process.exit(0)
-}
+// NOTE: the "only run at exactly 8am" check was removed — GitHub's
+// scheduled triggers aren't precise enough to rely on, and this is an
+// idempotent upsert so running more than once a day is harmless. See
+// fetch-standings.mjs for the fuller explanation.
 
 const OF_SET = new Set(['LF', 'CF', 'RF'])
 const IF_SET = new Set(['1B', '2B', '3B', 'SS'])

@@ -29,18 +29,14 @@ if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   process.exit(1)
 }
 
-// Only actually run at 8am America/New_York, regardless of which UTC cron
-// trigger fired — makes this correct through Daylight Saving with no
-// manual adjustment (see the two cron entries in the workflow file).
-const nyHour = Number(
-  new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }).format(
-    new Date(),
-  ),
-)
-if (nyHour !== 8 && process.env.FORCE_RUN !== 'true') {
-  console.log(`Skipping — it's ${nyHour}:00 in New York, not 8am. (Expected for one of the two daily triggers.)`)
-  process.exit(0)
-}
+// NOTE: this used to hard-require exactly 8am America/New_York and skip
+// otherwise (to avoid one of the two daily UTC triggers running twice due
+// to Daylight Saving). Removed — GitHub's scheduled triggers aren't
+// precise and can fire well outside the target hour, which meant the
+// whole day's update was silently skipping itself far more often than it
+// was actually running. Every write below is an upsert, so running twice
+// in a day is completely harmless — there was never a real problem here
+// worth guarding against.
 
 const season = new Date().getFullYear()
 const BRAVES_TEAM_ID = 144
