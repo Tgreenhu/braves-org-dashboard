@@ -1,4 +1,5 @@
 import type { HitterSeasonStats, PitcherSeasonStats } from '@/types'
+import { ORG_LEVELS } from '@/types'
 import { scoreHitters, scorePitchers, type ScoredPlayer } from '@/lib/scoring'
 
 const INFIELD_POS = new Set(['1B', '2B', '3B', 'SS', 'IF', 'INF', 'UTIL', 'FIRST', 'SECOND', 'THIRD', 'SHORTSTOP', '3', '4', '5', '6'])
@@ -14,6 +15,68 @@ const CATCHER_POS = new Set(['C', 'CATCHER', '2'])
 export function primaryPosition(position: string | null | undefined): string {
   if (!position) return ''
   return position.split(/[\/,]/)[0].trim().toUpperCase()
+}
+
+const HITTER_RATE_KEYS = ['avg', 'obp', 'slg', 'ops', 'wrcPlus', 'bbPct', 'kPct'] as const
+const HITTER_SUM_KEYS = ['g', 'pa', 'ab', 'hr', 'sb'] as const
+const PITCHER_RATE_KEYS = ['era', 'fip', 'siera', 'whip', 'kPct', 'bbPct', 'kbbPct'] as const
+const PITCHER_SUM_KEYS = ['g', 'gs', 'ip'] as const
+
+/**
+ * A player who spent part of the season at more than one level (a
+ * call-up, an option, a rehab stint) has a separate row per level — each
+ * one correctly a full season in itself for the Players tab, but for All-
+ * Org Team purposes those are the SAME person, not two different
+ * competitors for two different slots. This collapses every name down to
+ * one entry: stats combined (rate stats weighted by playing time, counting
+ * stats summed), with the combined entry's level/position/age/team taken
+ * from whichever stint was at the HIGHEST level — both because that's the
+ * most representative "who is this player right now" signal, and because
+ * it avoids a tiny, favorable small-sample stint (e.g. 2 rehab innings)
+ * outscoring a real, larger-sample MLB line just by sitting in its own row.
+ */
+function combineAcrossLevels<T extends { name: string; level: (typeof ORG_LEVELS)[number] }>(
+  players: T[],
+  volumeKey: 'pa' | 'ip',
+  rateKeys: readonly string[],
+  sumKeys: readonly string[],
+): T[] {
+  const byName = new Map<string, T[]>()
+  for (const p of players) {
+    const key = p.name.trim().toLowerCase()
+    if (!byName.has(key)) byName.set(key, [])
+    byName.get(key)!.push(p)
+  }
+
+  const result: T[] = []
+  for (const group of byName.values()) {
+    if (group.length === 1) {
+      result.push(group[0])
+      continue
+    }
+
+    const totalVolume = group.reduce((s, p: any) => s + (p[volumeKey] ?? 0), 0)
+    const highestLevelRow = [...group].sort((a, b) => ORG_LEVELS.indexOf(a.level) - ORG_LEVELS.indexOf(b.level))[0]
+    const combined: any = { ...highestLevelRow }
+
+    for (const key of rateKeys) {
+      const weightedSum = group.reduce((s, p: any) => s + (p[key] ?? 0) * (p[volumeKey] ?? 0), 0)
+      combined[key] = totalVolume > 0 ? weightedSum / totalVolume : (highestLevelRow as any)[key]
+    }
+    for (const key of sumKeys) {
+      combined[key] = group.reduce((s, p: any) => s + (p[key] ?? 0), 0)
+    }
+
+    result.push(combined)
+  }
+  return result
+}
+
+export function combineHittersAcrossLevels(hitters: HitterSeasonStats[]): HitterSeasonStats[] {
+  return combineAcrossLevels(hitters, 'pa', HITTER_RATE_KEYS, HITTER_SUM_KEYS)
+}
+export function combinePitchersAcrossLevels(pitchers: PitcherSeasonStats[]): PitcherSeasonStats[] {
+  return combineAcrossLevels(pitchers, 'ip', PITCHER_RATE_KEYS, PITCHER_SUM_KEYS)
 }
 
 export interface OrgTeamSlot {
@@ -43,8 +106,10 @@ export function buildAllOrgTeams(
   hitters: HitterSeasonStats[],
   pitchers: PitcherSeasonStats[],
 ): OrgTeam[] {
-  const scoredHitters = scoreHitters(hitters)
-  const scoredPitchers = scorePitchers(pitchers)
+  const combinedHitters = combineHittersAcrossLevels(hitters)
+  const combinedPitchers = combinePitchersAcrossLevels(pitchers)
+  const scoredHitters = scoreHitters(combinedHitters)
+  const scoredPitchers = scorePitchers(combinedPitchers)
 
   const used = new Set<string>()
   const teams: OrgTeam[] = []
