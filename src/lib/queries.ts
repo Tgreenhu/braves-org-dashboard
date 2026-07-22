@@ -307,8 +307,75 @@ export async function updatePitcherPosition(dbId: string, position: string) {
   return supabase.from('pitcher_stats').update({ position }).eq('id', dbId)
 }
 
-/**
- * Tab 1: one row per affiliate, sorted MLB → DSL. Deliberately NOT cached
+// =====================================================================
+// Tab 8: MLB Dev
+// =====================================================================
+
+export async function fetchDevRankings(): Promise<import('@/lib/mlbDev').RankingRow[]> {
+  if (!supabaseConfigured) return []
+  const { data, error } = await supabase.from('dev_prospect_rankings').select('*')
+  if (error || !data) return []
+  return data.map((r: any) => ({
+    year: r.year,
+    rank: r.rank,
+    name: r.name,
+    position: r.position,
+    organization: r.organization,
+  }))
+}
+
+export async function fetchDevCareerWar(): Promise<import('@/lib/mlbDev').CareerWarRow[]> {
+  if (!supabaseConfigured) return []
+  const { data, error } = await supabase.from('dev_career_war').select('*')
+  if (error || !data) return []
+  return data.map((r: any) => ({
+    name: r.name,
+    playerType: r.player_type,
+    careerFwar: Number(r.career_fwar),
+    mlbSeasons: r.mlb_seasons,
+    organization: r.organization,
+    debutSeason: r.debut_season,
+    debutTeam: r.debut_team,
+  }))
+}
+
+export async function upsertDevRankings(rows: { year: number; rank: number; name: string; position: string | null; organization: string }[]) {
+  return supabase.from('dev_prospect_rankings').upsert(
+    rows.map((r) => ({ year: r.year, rank: r.rank, name: r.name, position: r.position, organization: r.organization })),
+    { onConflict: 'year,name' },
+  )
+}
+
+/** Debut file upload — only ever touches name/debut_season/debut_team, never overwrites fWAR data already there. */
+export async function upsertDevDebuts(rows: { name: string; debutSeason: number; debutTeam: string | null }[]) {
+  return supabase.from('dev_career_war').upsert(
+    rows.map((r) => ({
+      name: r.name,
+      debut_season: r.debutSeason,
+      debut_team: r.debutTeam,
+      updated_at: new Date().toISOString(),
+    })),
+    { onConflict: 'name' },
+  )
+}
+
+export async function upsertDevCareerWar(
+  rows: { name: string; playerType: 'Hitter' | 'Pitcher'; careerFwar: number; mlbSeasons: number; organization: string | null }[],
+) {
+  return supabase.from('dev_career_war').upsert(
+    rows.map((r) => ({
+      name: r.name,
+      player_type: r.playerType,
+      career_fwar: r.careerFwar,
+      mlb_seasons: r.mlbSeasons,
+      organization: r.organization,
+      updated_at: new Date().toISOString(),
+    })),
+    { onConflict: 'name' },
+  )
+}
+
+/** Tab 1: one row per affiliate, sorted MLB → DSL. Deliberately NOT cached
  * (unlike most reads here) — this table now updates once a day via the
  * standings automation running outside the browser (see
  * scripts/fetch-standings.mjs), so a cached copy would go stale with no
