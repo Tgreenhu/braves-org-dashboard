@@ -27,19 +27,18 @@ import {
   Loader2,
 } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { fetchCombinedPlayerPool, type PoolPlayer } from '@/lib/queries'
+import {
+  fetchCombinedPlayerPool,
+  fetchTop30List,
+  saveTop30List,
+  fetchTop30Snapshots,
+  createTop30Snapshot,
+  deleteTop30Snapshot,
+  type PoolPlayer,
+} from '@/lib/queries'
 import { supabaseConfigured } from '@/lib/supabaseClient'
 import { useClickOutside } from '@/lib/useClickOutside'
-import {
-  loadWorkingList,
-  saveWorkingState,
-  loadSnapshots,
-  saveSnapshots,
-  createSnapshot,
-  getPreviousRank,
-  formatSnapshotDate,
-  formatSnapshotTime,
-} from '@/lib/top30History'
+import { getPreviousRank, formatSnapshotDate, formatSnapshotTime } from '@/lib/top30History'
 import type { Position, Top30Entry, Top30Snapshot } from '@/types'
 
 const POSITIONS: Position[] = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'IF', 'DH', 'SP', 'RP']
@@ -47,23 +46,24 @@ const POSITIONS: Position[] = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'O
 const RANK_CAP = 50
 const SPLIT = 25 // left column = ranks 1-25, right column = ranks 26-50
 
-// Starts empty — nothing here until you actually build your own list.
-// (Working state persists to localStorage after your first edit, so this
-// only matters on a completely fresh browser/device.)
-const STARTER_LIST: Top30Entry[] = []
-
 const LIST_CONTAINER = 'top50'
 
 export default function Top30() {
-  // Working state (today's editable list) persists to localStorage so it
-  // survives a refresh but is NOT history — only "Submit" creates history.
-  const [list, setList] = useState<Top30Entry[]>(() => loadWorkingList(STARTER_LIST))
-  const [snapshots, setSnapshots] = useState<Top30Snapshot[]>(() => loadSnapshots())
+  // Working list + submission history both live in Supabase now (see
+  // lib/queries.ts) — not localStorage, which used to get wiped by the
+  // "Refresh Data" button since it shared a cache-key prefix.
+  const [list, setList] = useState<Top30Entry[] | null>(null)
+  const [snapshots, setSnapshots] = useState<Top30Snapshot[] | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [addMode, setAddMode] = useState<'database' | 'manual'>('database')
   const [manualForm, setManualForm] = useState({ name: '', position: 'SS' as Position, age: '' })
   const [justSubmitted, setJustSubmitted] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+
+  useEffect(() => {
+    fetchTop30List().then(setList)
+    fetchTop30Snapshots().then(setSnapshots)
+  }, [])
 
   // Fetched once here (not per-row) so both the "Add from database" search
   // and every manual entry's auto-link check share one Supabase round trip.
@@ -72,29 +72,23 @@ export default function Top30() {
     fetchCombinedPlayerPool().then(setDbPool)
   }, [])
 
-  // Kept passing an empty bucket to the existing save/snapshot functions —
-  // history and cross-device persistence work exactly as before, this page
-  // just no longer has a separate visible "bucket" column.
-  useEffect(() => saveWorkingState(list, []), [list])
-  useEffect(() => saveSnapshots(snapshots), [snapshots])
-
-  const latestSnapshot = snapshots[0] // loadSnapshots() returns newest-first
+  const latestSnapshot = snapshots?.[0] // fetchTop30Snapshots() returns newest-first
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
   const usedPlayerIds = useMemo(
-    () => new Set(list.filter((e) => e.playerId).map((e) => e.playerId as string)),
+    () => new Set((list ?? []).filter((e) => e.playerId).map((e) => e.playerId as string)),
     [list],
   )
 
-  const activeEntry = activeId ? list.find((e) => e.id === activeId) ?? null : null
+  const activeEntry = activeId ? (list ?? []).find((e) => e.id === activeId) ?? null : null
 
   const handleDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id))
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     setActiveId(null)
-    if (!over) return
+    if (!over || !list) return
     const activeIdStr = String(active.id)
     const overIdStr = String(over.id)
     if (activeIdStr === overIdStr) return
@@ -103,20 +97,23 @@ export default function Top30() {
     const newIndex = list.findIndex((i) => i.id === overIdStr)
     if (oldIndex === -1 || newIndex === -1) return
 
-    const reordered = arrayMove(list, oldIndex, newIndex)
-    setList(renumber(reordered))
+    const reordered = renumber(arrayMove(list, oldIndex, newIndex))
+    setList(reordered)
+    saveTop30List(reordered, [])
   }
 
   const renumber = (items: Top30Entry[]) => items.map((item, i) => ({ ...item, rank: i + 1 }))
 
   const addEntry = (entry: Omit<Top30Entry, 'id' | 'rank'>) => {
-    if (list.length >= RANK_CAP) return // full — remove someone first
+    if (!list || list.length >= RANK_CAP) return // full — remove someone first
     const withMeta: Top30Entry = {
       ...entry,
-      id: `p-${Date.now()}`,
+      id: crypto.randomUUID(), // must be a real UUID — top_30_list.id is a uuid column
       rank: list.length + 1,
     }
-    setList((prev) => [...prev, withMeta])
+    const next = [...list, withMeta]
+    setList(next)
+    saveTop30List(next, [])
   }
 
   const addFromDatabase = (player: PoolPlayer) => {
@@ -136,32 +133,38 @@ export default function Top30() {
   }
 
   const removeEntry = (id: string) => {
-    setList((prev) => renumber(prev.filter((p) => p.id !== id)))
+    if (!list) return
+    const next = renumber(list.filter((p) => p.id !== id))
+    setList(next)
+    saveTop30List(next, [])
   }
 
   const linkEntry = (id: string, match: PoolPlayer) => {
-    setList((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? { ...item, playerId: match.playerId, position: match.position as Position, age: match.age, source: 'database' as const }
-          : item,
-      ),
+    if (!list) return
+    const next = list.map((item) =>
+      item.id === id
+        ? { ...item, playerId: match.playerId, position: match.position as Position, age: match.age, source: 'database' as const }
+        : item,
     )
+    setList(next)
+    saveTop30List(next, [])
   }
 
-  const handleSubmit = () => {
-    const snapshot = createSnapshot(list, [])
-    setSnapshots((prev) => [snapshot, ...prev])
+  const handleSubmit = async () => {
+    if (!list) return
+    const snapshot = await createTop30Snapshot(list, [])
+    if (snapshot) setSnapshots((prev) => [snapshot, ...(prev ?? [])])
     setJustSubmitted(true)
     setTimeout(() => setJustSubmitted(false), 2500)
   }
 
-  const deleteSnapshot = (id: string) => {
-    setSnapshots((prev) => prev.filter((s) => s.id !== id))
+  const deleteSnapshot = async (id: string) => {
+    await deleteTop30Snapshot(id)
+    setSnapshots((prev) => (prev ?? []).filter((s) => s.id !== id))
   }
 
-  const leftHalf = list.slice(0, SPLIT)
-  const rightHalf = list.slice(SPLIT, RANK_CAP)
+  const leftHalf = (list ?? []).slice(0, SPLIT)
+  const rightHalf = (list ?? []).slice(SPLIT, RANK_CAP)
 
   return (
     <div className="space-y-4">
@@ -182,8 +185,8 @@ export default function Top30() {
             data-active={showHistory}
           >
             <History size={14} /> History
-            {snapshots.length > 0 && (
-              <span className="ml-0.5 rounded-full bg-navy-950/10 px-1.5 text-[10px]">{snapshots.length}</span>
+            {(snapshots?.length ?? 0) > 0 && (
+              <span className="ml-0.5 rounded-full bg-navy-950/10 px-1.5 text-[10px]">{snapshots?.length}</span>
             )}
           </button>
           <button onClick={handleSubmit} className="pill-button !bg-brave-red !text-white !border-brave-red">
@@ -193,6 +196,12 @@ export default function Top30() {
         </div>
       </div>
 
+      {list === null || snapshots === null ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-sm text-navy-900/40">
+          <Loader2 size={16} className="animate-spin" /> Loading your list…
+        </div>
+      ) : (
+        <>
       {showHistory && <HistoryPanel snapshots={snapshots} onDelete={deleteSnapshot} />}
 
       {/* Add player panel */}
@@ -325,6 +334,8 @@ export default function Top30() {
 
         <DragOverlay>{activeEntry ? <PlayerCardVisual entry={activeEntry} dragging /> : null}</DragOverlay>
       </DndContext>
+        </>
+      )}
     </div>
   )
 }
