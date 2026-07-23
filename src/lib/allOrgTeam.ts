@@ -30,10 +30,11 @@ const PITCHER_SUM_KEYS = ['g', 'gs', 'ip'] as const
  * competitors for two different slots. This collapses every name down to
  * one entry: stats combined (rate stats weighted by playing time, counting
  * stats summed), with the combined entry's level/position/age/team taken
- * from whichever stint was at the HIGHEST level — both because that's the
- * most representative "who is this player right now" signal, and because
- * it avoids a tiny, favorable small-sample stint (e.g. 2 rehab innings)
- * outscoring a real, larger-sample MLB line just by sitting in its own row.
+ * from whichever stint had the MOST playing time — not just whichever was
+ * technically the highest level. That distinction matters: a real call-up
+ * with meaningful innings should be credited at that level, but a token
+ * 1-PA cameo shouldn't hand an overwhelmingly-AAA player the full MLB
+ * level bonus in scoring just because that stint was "higher."
  */
 function combineAcrossLevels<T extends { name: string; level: (typeof ORG_LEVELS)[number] }>(
   players: T[],
@@ -56,12 +57,19 @@ function combineAcrossLevels<T extends { name: string; level: (typeof ORG_LEVELS
     }
 
     const totalVolume = group.reduce((s, p: any) => s + (p[volumeKey] ?? 0), 0)
-    const highestLevelRow = [...group].sort((a, b) => ORG_LEVELS.indexOf(a.level) - ORG_LEVELS.indexOf(b.level))[0]
-    const combined: any = { ...highestLevelRow }
+    // Represent this player at whichever level they actually played the
+    // MOST at — not just the technically-highest level they touched. A
+    // real call-up with meaningful playing time (50+ IP at MLB) should
+    // correctly be credited at MLB, but a 1-PA September cameo shouldn't
+    // hand a mostly-AAA player the full MLB level bonus in scoring.
+    const dominantRow = [...group].sort((a: any, b: any) => (b[volumeKey] ?? 0) - (a[volumeKey] ?? 0))[0]
+    const combined: any = { ...dominantRow }
 
     for (const key of rateKeys) {
       const weightedSum = group.reduce((s, p: any) => s + (p[key] ?? 0) * (p[volumeKey] ?? 0), 0)
-      combined[key] = totalVolume > 0 ? weightedSum / totalVolume : (highestLevelRow as any)[key]
+      let value = totalVolume > 0 ? weightedSum / totalVolume : (dominantRow as any)[key]
+      if (key === 'wrcPlus') value = Math.round(value) // always a whole number
+      combined[key] = value
     }
     for (const key of sumKeys) {
       combined[key] = group.reduce((s, p: any) => s + (p[key] ?? 0), 0)
