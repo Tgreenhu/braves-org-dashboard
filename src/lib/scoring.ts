@@ -59,12 +59,12 @@ function roleBonus(position: string | null | undefined): number {
  * sensibly.
  */
 export const HITTER_WEIGHTS = {
-  wrcPlus: 0.34,
-  ops: 0.22,
-  obp: 0.14,
-  avg: 0.08,
-  slg: 0.1,
-  bbKRatio: 0.12,
+  wrcPlus: 0.5, // the one all-in-one, context-adjusted offensive value stat — should clearly lead
+  ops: 0.15,
+  obp: 0.08, // already substantially reflected in wRC+ and OPS — kept small on purpose to avoid double-counting
+  avg: 0.05,
+  slg: 0.07,
+  bbKRatio: 0.07, // same reasoning as OBP — real signal, but shouldn't be able to outvote wRC+
 }
 
 /**
