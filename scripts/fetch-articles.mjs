@@ -64,7 +64,7 @@ async function scrapeJustBaseball(page) {
 
   while (pageNum <= maxPages) {
     const url = pageNum === 1 ? JUST_BASEBALL_AUTHOR_URL : `${JUST_BASEBALL_AUTHOR_URL}page/${pageNum}/`
-    const res = await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => null)
+    const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => null)
     if (!res || !res.ok()) break // ran past the last real page
 
     const rows = await page.$$eval('a', (links) =>
@@ -100,7 +100,7 @@ async function scrapeJustBaseball(page) {
 // byline directly in the listing, so this doesn't need to open every post.
 // ---------------------------------------------------------------------
 async function scrapeBravesToday(page) {
-  const res = await page.goto(BRAVES_TODAY_ARCHIVE_URL, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => null)
+  const res = await page.goto(BRAVES_TODAY_ARCHIVE_URL, { waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => null)
   if (!res || !res.ok()) {
     console.warn(`Braves Today archive request failed: ${res ? res.status() : 'no response'}`)
     return []

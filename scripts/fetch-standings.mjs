@@ -185,7 +185,7 @@ function findColumnIndex(headerCells, candidates) {
 }
 
 async function scrapeMilbRow(page, target) {
-  await page.goto(target.url, { waitUntil: 'networkidle', timeout: 60000 })
+  await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 90000 })
   await page.waitForSelector('table', { timeout: 30000 }).catch(() => {})
 
   const tables = await page.$$('table')

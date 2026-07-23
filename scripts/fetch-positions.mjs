@@ -93,10 +93,17 @@ async function main() {
 // MLB depth chart
 // ---------------------------------------------------------------------
 async function scrapeMlbDepthChart(page) {
+  // 'networkidle' can hang indefinitely on pages with ongoing ad/analytics
+  // beacons that never fully go quiet — that's almost certainly what
+  // caused the timeout. 'domcontentloaded' fires much sooner and
+  // reliably; waiting for an actual table to appear afterward is a more
+  // trustworthy signal that the content we need has rendered.
   await page.goto('https://www.fangraphs.com/depthcharts.aspx?position=ALL&teamid=16', {
-    waitUntil: 'networkidle',
-    timeout: 60000,
+    waitUntil: 'domcontentloaded',
+    timeout: 90000,
   })
+  await page.waitForSelector('table', { timeout: 60000 }).catch(() => {})
+  await page.waitForTimeout(1500) // let any late-rendering rows settle
 
   // Kept as two SEPARATE maps on purpose — mixing hitter codes (OF/INF/...)
   // and pitcher roles (SP/RP) into one lookup, then applying it to both
@@ -179,8 +186,8 @@ async function scrapeSectionIp(page, sectionId) {
 // ---------------------------------------------------------------------
 async function scrapeMilbPowerRankings(page) {
   await page.goto('https://www.fangraphs.com/roster-resource/minor-league-power-rankings/braves', {
-    waitUntil: 'networkidle',
-    timeout: 60000,
+    waitUntil: 'domcontentloaded',
+    timeout: 90000,
   })
   await page.waitForSelector('table', { timeout: 30000 }).catch(() => {})
 
