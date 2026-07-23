@@ -31,8 +31,8 @@ const ABSOLUTE_YOUTH_THRESHOLD = 20
 const ABSOLUTE_YOUTH_WEIGHT = 0.012 // per (year under threshold)²
 const MAX_ABSOLUTE_YOUTH_BONUS = 0.4
 
-/** Slight starter bump — total gap between an SP and an RP with identical stats/level/age. Deliberately small relative to the stat weights below. */
-const ROLE_GAP = 0.15
+/** Starter bump — total gap between an SP and an RP with identical stats/level/age. Increased from an earlier, more timid version — starters matter more, deliberately more than a token nudge now. */
+const ROLE_GAP = 0.35
 function roleBonus(position: string | null | undefined): number {
   const primary = (position ?? '').split(/[\/,]/)[0].trim().toUpperCase()
   if (primary === 'SP') return ROLE_GAP / 2
