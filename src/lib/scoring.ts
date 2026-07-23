@@ -10,8 +10,19 @@ import { LEVEL_FACTOR, LEVEL_AVG_AGE } from '@/lib/levelBaselines'
  * purely on youth — these values were recalibrated after seeing that.)
  */
 export const LEVEL_WEIGHT = 0.38 // multiplies LEVEL_FACTOR (0-1) — full MLB-to-DSL gap ≈ 0.29
-export const AGE_WEIGHT = 0.045 // multiplied by years young/old for level, capped below
+export const AGE_WEIGHT = 0.045 // multiplied by years young/old for level, capped below — hitters only, see PITCHER_AGE_WEIGHT below
 const MAX_AGE_BONUS = 0.3 // no single relative-age gap (however extreme) can swing more than this
+
+/**
+ * Pitchers get a much lighter age treatment than hitters, and NONE at all
+ * once they're at MLB specifically — a 37-year-old and a 24-year-old at
+ * the big-league level just both need to get hitters out; age isn't a
+ * meaningful signal there the way it is for, say, a teenager dominating
+ * A-ball. Still applies (lightly) below MLB, where age-for-level remains
+ * a real precocity signal for pitching prospects too.
+ */
+const PITCHER_AGE_WEIGHT = 0.015 // about a third of the hitter weight
+const PITCHER_MAX_AGE_BONUS = 0.1
 
 /**
  * Separate from the relative "young/old for level" bonus above — this
@@ -28,8 +39,10 @@ const MAX_AGE_BONUS = 0.3 // no single relative-age gap (however extreme) can sw
  * young," which wasn't the intent.
  */
 const ABSOLUTE_YOUTH_THRESHOLD = 20
-const ABSOLUTE_YOUTH_WEIGHT = 0.012 // per (year under threshold)²
+const ABSOLUTE_YOUTH_WEIGHT = 0.012 // per (year under threshold)² — hitters
 const MAX_ABSOLUTE_YOUTH_BONUS = 0.4
+const PITCHER_ABSOLUTE_YOUTH_WEIGHT = 0.006 // half the hitter weight, same "barely register unless truly extreme" shape
+const PITCHER_MAX_ABSOLUTE_YOUTH_BONUS = 0.2
 
 /** Starter bump — total gap between an SP and an RP with identical stats/level/age. Increased from an earlier, more timid version — starters matter more, deliberately more than a token nudge now. */
 const ROLE_GAP = 0.35
@@ -81,11 +94,11 @@ export const HITTER_WEIGHTS = {
  *    translates best up the ladder.
  */
 export const PITCHER_WEIGHTS = {
-  fip: 0.28,
-  siera: 0.26,
-  era: 0.16,
-  whip: 0.14,
-  kbbRatio: 0.16,
+  siera: 0.45, // most predictive/comprehensive ERA estimator (accounts for batted-ball profile and pitch mix) — the pitching equivalent of wRC+'s role for hitters, should clearly lead
+  fip: 0.2, // still meaningful (defense-independent) but reduced — overlaps heavily with SIERA
+  era: 0.1, // actual results matter, but noisier/more context-dependent than the estimators
+  whip: 0.1,
+  kbbRatio: 0.15, // a comparatively independent skill signal (swing-and-miss + control), kept relatively higher for that reason
 }
 
 function mean(nums: number[]) {
@@ -115,8 +128,8 @@ export interface LevelAgeBreakdown {
   absoluteYouthBonus: number
 }
 
-/** Level prestige + age-for-level bonus + absolute-youth bonus, shared by both scoreHitters and scorePitchers. */
-function levelAgeBonus(level: HitterSeasonStats['level'], age: number): LevelAgeBreakdown {
+/** Level prestige + age-for-level bonus + absolute-youth bonus, for hitters. */
+function hitterLevelAgeBonus(level: HitterSeasonStats['level'], age: number): LevelAgeBreakdown {
   const levelBonus = LEVEL_WEIGHT * (LEVEL_FACTOR[level] ?? 0.5)
 
   const ageDelta = age - (LEVEL_AVG_AGE[level] ?? 22) // positive = older than typical for level
@@ -124,6 +137,23 @@ function levelAgeBonus(level: HitterSeasonStats['level'], age: number): LevelAge
 
   const yearsUnderThreshold = Math.max(0, ABSOLUTE_YOUTH_THRESHOLD - age)
   const absoluteYouthBonus = Math.min(MAX_ABSOLUTE_YOUTH_BONUS, yearsUnderThreshold ** 2 * ABSOLUTE_YOUTH_WEIGHT)
+
+  return { levelBonus, relativeAgeBonus, absoluteYouthBonus }
+}
+
+/** Same idea, but pitchers get a much lighter age treatment — and none at all once they're at MLB specifically. */
+function pitcherLevelAgeBonus(level: PitcherSeasonStats['level'], age: number): LevelAgeBreakdown {
+  const levelBonus = LEVEL_WEIGHT * (LEVEL_FACTOR[level] ?? 0.5)
+
+  let relativeAgeBonus = 0
+  let absoluteYouthBonus = 0
+  if (level !== 'MLB') {
+    const ageDelta = age - (LEVEL_AVG_AGE[level] ?? 22)
+    relativeAgeBonus = Math.max(-PITCHER_MAX_AGE_BONUS, Math.min(PITCHER_MAX_AGE_BONUS, -PITCHER_AGE_WEIGHT * ageDelta))
+
+    const yearsUnderThreshold = Math.max(0, ABSOLUTE_YOUTH_THRESHOLD - age)
+    absoluteYouthBonus = Math.min(PITCHER_MAX_ABSOLUTE_YOUTH_BONUS, yearsUnderThreshold ** 2 * PITCHER_ABSOLUTE_YOUTH_WEIGHT)
+  }
 
   return { levelBonus, relativeAgeBonus, absoluteYouthBonus }
 }
@@ -153,7 +183,7 @@ export function scoreHitters(hitters: HitterSeasonStats[]): ScoredPlayer<HitterS
       const avgW = z.avg[i] * HITTER_WEIGHTS.avg
       const slgW = z.slg[i] * HITTER_WEIGHTS.slg
       const bbKW = z.bbKRatio[i] * HITTER_WEIGHTS.bbKRatio
-      const { levelBonus, relativeAgeBonus, absoluteYouthBonus } = levelAgeBonus(player.level, player.age)
+      const { levelBonus, relativeAgeBonus, absoluteYouthBonus } = hitterLevelAgeBonus(player.level, player.age)
       return {
         player,
         score: wrcPlusW + opsW + obpW + avgW + slgW + bbKW + levelBonus + relativeAgeBonus + absoluteYouthBonus,
@@ -190,7 +220,7 @@ export function scorePitchers(pitchers: PitcherSeasonStats[]): ScoredPlayer<Pitc
       const eraW = z.era[i] * PITCHER_WEIGHTS.era
       const whipW = z.whip[i] * PITCHER_WEIGHTS.whip
       const kbbW = z.kbbRatio[i] * PITCHER_WEIGHTS.kbbRatio
-      const { levelBonus, relativeAgeBonus, absoluteYouthBonus } = levelAgeBonus(player.level, player.age)
+      const { levelBonus, relativeAgeBonus, absoluteYouthBonus } = pitcherLevelAgeBonus(player.level, player.age)
       const roleW = roleBonus(player.position)
       return {
         player,
