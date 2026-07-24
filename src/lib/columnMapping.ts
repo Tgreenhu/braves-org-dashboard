@@ -63,9 +63,26 @@ const LEVEL_ALIASES: Record<string, string> = {
   DSL: 'DSL',
 }
 
+// Level priority for picking the "best" level out of a multi-level string
+// (lower number = higher level). Used both for normalizing a single label
+// and for resolving something like "AA,AAA" down to just "AAA".
+const LEVEL_PRIORITY: Record<string, number> = { MLB: 1, AAA: 2, AA: 3, 'A+': 4, A: 5, FCL: 6, DSL: 7 }
+
 function parseLevel(raw: any): string | null {
   const s = parseString(raw)
   if (!s) return null
+
+  // Some Fangraphs exports give one row per player with a comma-joined
+  // level list (e.g. "AA,AAA") for anyone who split time, instead of a
+  // separate row per level. Rather than storing that garbage string
+  // as-is (which silently breaks level-based bonuses/comparisons
+  // elsewhere in the app), resolve it down to whichever level is highest.
+  if (s.includes(',')) {
+    const tokens = s.split(',').map((t) => LEVEL_ALIASES[t.trim().toUpperCase()] ?? t.trim().toUpperCase())
+    tokens.sort((a, b) => (LEVEL_PRIORITY[a] ?? 99) - (LEVEL_PRIORITY[b] ?? 99))
+    return tokens[0]
+  }
+
   return LEVEL_ALIASES[s.toUpperCase()] ?? s
 }
 
