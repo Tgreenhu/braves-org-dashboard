@@ -67,9 +67,10 @@ function roleBonus(position: string | null | undefined): number {
  *    matters most for run creation).
  *  - BB%:K% ratio rewards plate discipline independent of results, which is
  *    a good "sticks in the big leagues" signal for prospects.
- * All inputs are converted to z-scores against the full player pool before
- * weighting so unlike-scaled stats (e.g. AVG ~.260 vs wRC+ ~100) combine
- * sensibly.
+ * All inputs are converted to z-scores against real peers at the SAME
+ * level (see zScoresByLevel below) before weighting, so unlike-scaled
+ * stats (e.g. AVG ~.260 vs wRC+ ~100) combine sensibly and MLB players
+ * aren't measured against complex-league statistical noise.
  */
 export const HITTER_WEIGHTS = {
   wrcPlus: 0.5, // the one all-in-one, context-adjusted offensive value stat — should clearly lead
@@ -85,8 +86,11 @@ export const HITTER_WEIGHTS = {
  * Teams (Tab 3). Lower ERA/FIP/SIERA/WHIP is better, so those are
  * z-scored and then inverted (negated) before weighting.
  *
- *  - FIP and SIERA are weighted highest since they're more predictive /
- *    defense-independent than ERA.
+ *  - SIERA is weighted highest — the most predictive/comprehensive ERA
+ *    estimator (accounts for batted-ball profile and pitch mix), the
+ *    pitching equivalent of wRC+'s role for hitters.
+ *  - FIP still meaningful (defense-independent) but reduced — overlaps
+ *    heavily with SIERA.
  *  - ERA included per the brief, but at a lower weight since it's noisier
  *    over minor-league sample sizes.
  *  - WHIP captures baserunner prevention directly.
@@ -94,11 +98,11 @@ export const HITTER_WEIGHTS = {
  *    translates best up the ladder.
  */
 export const PITCHER_WEIGHTS = {
-  siera: 0.45, // most predictive/comprehensive ERA estimator (accounts for batted-ball profile and pitch mix) — the pitching equivalent of wRC+'s role for hitters, should clearly lead
-  fip: 0.2, // still meaningful (defense-independent) but reduced — overlaps heavily with SIERA
-  era: 0.1, // actual results matter, but noisier/more context-dependent than the estimators
+  siera: 0.45,
+  fip: 0.2,
+  era: 0.1,
   whip: 0.1,
-  kbbRatio: 0.15, // a comparatively independent skill signal (swing-and-miss + control), kept relatively higher for that reason
+  kbbRatio: 0.15,
 }
 
 function mean(nums: number[]) {
@@ -158,6 +162,36 @@ function pitcherLevelAgeBonus(level: PitcherSeasonStats['level'], age: number): 
   return { levelBonus, relativeAgeBonus, absoluteYouthBonus }
 }
 
+/**
+ * Same as zScores(), but computes the mean/stddev separately WITHIN each
+ * level instead of across the whole org at once. This matters a lot: an
+ * MLB player's stats were previously being z-scored against a pool that
+ * also includes complex-league and rookie-ball performances, where results
+ * are far more volatile — a genuinely elite MLB SIERA could end up looking
+ * mediocre purely from being compared to the wrong peer group. Comparing
+ * players only to real peers at their own level, then letting the
+ * separate Level bonus account for MLB being harder than A-ball, is the
+ * correct way to combine "how good relative to peers" with "how hard is
+ * this level" without conflating the two.
+ */
+function zScoresByLevel<T extends { level: string }>(players: T[], valueFn: (p: T) => number | null | undefined) {
+  const indicesByLevel = new Map<string, number[]>()
+  players.forEach((p, i) => {
+    if (!indicesByLevel.has(p.level)) indicesByLevel.set(p.level, [])
+    indicesByLevel.get(p.level)!.push(i)
+  })
+
+  const result = new Array(players.length).fill(0)
+  for (const indices of indicesByLevel.values()) {
+    const values = indices.map((i) => valueFn(players[i]))
+    const levelZ = zScores(values)
+    indices.forEach((originalIndex, j) => {
+      result[originalIndex] = levelZ[j]
+    })
+  }
+  return result
+}
+
 export interface ScoredPlayer<T> {
   player: T
   score: number
@@ -166,14 +200,14 @@ export interface ScoredPlayer<T> {
 }
 
 export function scoreHitters(hitters: HitterSeasonStats[]): ScoredPlayer<HitterSeasonStats>[] {
-  const bbk = hitters.map((h) => (h.bbPct != null && h.kPct != null ? h.bbPct / Math.max(h.kPct, 1) : null))
+  const bbKRatioOf = (h: HitterSeasonStats) => (h.bbPct != null && h.kPct != null ? h.bbPct / Math.max(h.kPct, 1) : null)
   const z = {
-    wrcPlus: zScores(hitters.map((h) => h.wrcPlus)),
-    ops: zScores(hitters.map((h) => h.ops)),
-    obp: zScores(hitters.map((h) => h.obp)),
-    avg: zScores(hitters.map((h) => h.avg)),
-    slg: zScores(hitters.map((h) => h.slg)),
-    bbKRatio: zScores(bbk),
+    wrcPlus: zScoresByLevel(hitters, (h) => h.wrcPlus),
+    ops: zScoresByLevel(hitters, (h) => h.ops),
+    obp: zScoresByLevel(hitters, (h) => h.obp),
+    avg: zScoresByLevel(hitters, (h) => h.avg),
+    slg: zScoresByLevel(hitters, (h) => h.slg),
+    bbKRatio: zScoresByLevel(hitters, bbKRatioOf),
   }
   return hitters
     .map((player, i) => {
@@ -204,14 +238,13 @@ export function scoreHitters(hitters: HitterSeasonStats[]): ScoredPlayer<HitterS
 }
 
 export function scorePitchers(pitchers: PitcherSeasonStats[]): ScoredPlayer<PitcherSeasonStats>[] {
-  const kbb = pitchers.map((p) => p.kbbPct)
   const negate = (n: number | null | undefined) => (n == null ? null : -n)
   const z = {
-    fip: zScores(pitchers.map((p) => negate(p.fip))),
-    siera: zScores(pitchers.map((p) => negate(p.siera))),
-    era: zScores(pitchers.map((p) => negate(p.era))),
-    whip: zScores(pitchers.map((p) => negate(p.whip))),
-    kbbRatio: zScores(kbb),
+    fip: zScoresByLevel(pitchers, (p) => negate(p.fip)),
+    siera: zScoresByLevel(pitchers, (p) => negate(p.siera)),
+    era: zScoresByLevel(pitchers, (p) => negate(p.era)),
+    whip: zScoresByLevel(pitchers, (p) => negate(p.whip)),
+    kbbRatio: zScoresByLevel(pitchers, (p) => p.kbbPct),
   }
   return pitchers
     .map((player, i) => {
