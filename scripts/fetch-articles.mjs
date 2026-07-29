@@ -1,18 +1,24 @@
 // Pulls new articles from both outlets into `writer_articles`, once a day
-// at 8am America/New_York (same DST-safe pattern as the other scripts).
+// (both scheduled triggers actually run now — see the note in
+// fetch-standings.mjs about why the old "only at exactly 8am" check was
+// removed; upserts are idempotent so running more than once is harmless).
 //
-// Rebuilt on Playwright (a real headless browser) after the plain-fetch
-// version failed for both sources:
-//   - Braves Today's RSS feed returned a flat 403 — most likely bot
-//     detection rejecting a request with no real browser signature.
-//   - Just Baseball's guessed feed URL returned 200 but zero parseable
-//     items — almost certainly a soft-404 (a normal page, not a feed)
-//     that the site returns with a 200 status instead of an error.
-// A real browser sidesteps both: it presents a normal browser fingerprint,
-// and this scrapes the actual page content instead of a guessed feed URL.
+// Rebuilt on Playwright (a real headless browser) after a plain-fetch/RSS
+// version failed for both sources — Braves Today's RSS feed returned a
+// flat 403 (bot detection), and Just Baseball's guessed feed URL returned
+// 200 but zero parseable items (almost certainly a soft-404 page, not a
+// real feed). A real browser sidesteps both: normal browser fingerprint,
+// and this scrapes actual page content instead of a guessed feed URL.
 //
-// IMPORTANT — like the other Playwright scripts, this is best-effort and
-// untested against the live sites. Check the Actions log after a run.
+// IMPORTANT: neither listing page reliably shows a publish date without
+// opening each article individually, so scraped rows deliberately don't
+// include a `published_date` key at all (not `null`) — Supabase's upsert
+// only overwrites columns that are actually present in the row object, so
+// omitting the key here means a real date already sitting in the
+// database (e.g. from the original manual seed) never gets clobbered by
+// a later automated re-scrape of the same URL. Setting it to `null`
+// explicitly here was the bug that wiped out the seeded Just Baseball
+// dates — don't reintroduce that.
 
 import { chromium } from 'playwright'
 
@@ -23,11 +29,6 @@ if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   console.error('Missing VITE_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars.')
   process.exit(1)
 }
-
-// NOTE: the "only run at exactly 8am" check was removed — GitHub's
-// scheduled triggers aren't precise enough to rely on, and this is an
-// idempotent upsert so running more than once a day is harmless. See
-// fetch-standings.mjs for the fuller explanation.
 
 const JUST_BASEBALL_AUTHOR_URL = 'https://www.justbaseball.com/author/taylorgreenhut/'
 const BRAVES_TODAY_ARCHIVE_URL = 'https://bravestoday.substack.com/archive'
@@ -55,7 +56,7 @@ async function main() {
 }
 
 // ---------------------------------------------------------------------
-// Just Baseball — paginated author page (not a guessed feed URL)
+// Just Baseball — paginated author page
 // ---------------------------------------------------------------------
 async function scrapeJustBaseball(page) {
   const articles = []
@@ -66,6 +67,8 @@ async function scrapeJustBaseball(page) {
     const url = pageNum === 1 ? JUST_BASEBALL_AUTHOR_URL : `${JUST_BASEBALL_AUTHOR_URL}page/${pageNum}/`
     const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => null)
     if (!res || !res.ok()) break // ran past the last real page
+
+    await page.waitForTimeout(1000)
 
     const rows = await page.$$eval('a', (links) =>
       links
@@ -84,7 +87,7 @@ async function scrapeJustBaseball(page) {
         company: 'Just Baseball',
         category: null,
         content_type: 'Article',
-        published_date: null, // not reliably available from the listing page without opening each article; add manually if needed
+        // no published_date key — see the note at the top of this file
         source: 'scraped',
       })
     }
@@ -95,9 +98,7 @@ async function scrapeJustBaseball(page) {
 }
 
 // ---------------------------------------------------------------------
-// Braves Today — archive page, filtered to posts with a matching byline.
-// Substack's archive view for multi-author publications shows each post's
-// byline directly in the listing, so this doesn't need to open every post.
+// Braves Today — archive page, filtered to posts with a matching byline
 // ---------------------------------------------------------------------
 async function scrapeBravesToday(page) {
   const res = await page.goto(BRAVES_TODAY_ARCHIVE_URL, { waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => null)
@@ -106,8 +107,7 @@ async function scrapeBravesToday(page) {
     return []
   }
 
-  // Scroll a handful of times to load more of the archive (it's an
-  // infinite-scroll list), then read whatever's rendered.
+  await page.waitForTimeout(1500)
   for (let i = 0; i < 5; i++) {
     await page.mouse.wheel(0, 2000)
     await page.waitForTimeout(800)
@@ -136,7 +136,7 @@ async function scrapeBravesToday(page) {
       company: 'Braves Today',
       category: null,
       content_type: 'Article',
-      published_date: null,
+      // no published_date key — see the note at the top of this file
       source: 'scraped',
     }))
 }
