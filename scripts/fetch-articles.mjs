@@ -31,13 +31,17 @@ if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
 }
 
 const JUST_BASEBALL_AUTHOR_URL = 'https://www.justbaseball.com/author/taylorgreenhut/'
-const BRAVES_TODAY_ARCHIVE_URL = 'https://bravestoday.substack.com/archive'
+const BRAVES_TODAY_ARCHIVE_URL = 'https://www.bravestoday.com/archive'
 const AUTHOR_NAME_MATCH = /\btaylor\b|greenhut|tgod176/i // byline on Braves Today reads just "Taylor" — confirmed from a real published post
 
 async function main() {
   const browser = await chromium.launch()
   try {
-    const page = await browser.newPage()
+    const page = await browser.newPage({
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 900 },
+    })
 
     const justBaseballArticles = await scrapeJustBaseball(page)
     console.log(`Just Baseball: found ${justBaseballArticles.length} articles`)
