@@ -3,6 +3,7 @@ import { cachedFetch } from '@/lib/cache'
 import { CURRENT_SEASON } from '@/lib/constants'
 import type { HitterSeasonStats, PitcherSeasonStats, TeamLevelRecord, OrgLevel, Top30Entry, Top30Snapshot } from '@/types'
 import { ORG_LEVELS } from '@/types'
+import { mergeWithPriority, computeExpectedDiffs, HITTER_STAT_PRIORITY, PITCHER_STAT_PRIORITY, type StatSource } from '@/lib/priorityMerge'
 
 // =====================================================================
 // This is the real data layer — every read in the app should go through
@@ -16,6 +17,7 @@ import { ORG_LEVELS } from '@/types'
 // =====================================================================
 
 function mapHitterRow(row: Record<string, any>): HitterSeasonStats {
+  const diffs = computeExpectedDiffs({ avg: row.avg, slg: row.slg, woba: row.woba, xba: row.xba, xslg: row.xslg, xwoba: row.xwoba })
   return {
     dbId: row.id,
     playerId: row.player_id ?? row.id,
@@ -40,6 +42,22 @@ function mapHitterRow(row: Record<string, any>): HitterSeasonStats {
     sb: row.sb,
     mlbGamesCareer: row.mlb_games_career ?? 0, // not tracked in historical_hitter_stats
     isTotal: row.is_total ?? true,
+    // Expected
+    woba: row.woba,
+    xba: row.xba,
+    xslg: row.xslg,
+    xwoba: row.xwoba,
+    avgVsExpected: diffs.avgVsExpected,
+    slgVsExpected: diffs.slgVsExpected,
+    wobaVsExpected: diffs.wobaVsExpected,
+    // Plate discipline
+    chasePct: row.chase_pct,
+    whiffPct: row.whiff_pct,
+    swingPct: row.swing_pct,
+    zSwingPct: row.z_swing_pct,
+    zContactPct: row.z_contact_pct,
+    pullAirPct: row.pull_air_pct,
+    // Batted Ball / Statcast / Bat Tracking
     gbPct: row.gb_pct,
     fbPct: row.fb_pct,
     ldPct: row.ld_pct,
@@ -53,9 +71,6 @@ function mapHitterRow(row: Record<string, any>): HitterSeasonStats {
     laAvg: row.la_avg,
     barrelPct: row.barrel_pct,
     hardHitPct: row.hardhit_pct,
-    xba: row.xba,
-    xslg: row.xslg,
-    xwoba: row.xwoba,
     batSpeed: row.bat_speed,
     swingLength: row.swing_length,
     squaredUpPct: row.squared_up_pct,
@@ -64,6 +79,7 @@ function mapHitterRow(row: Record<string, any>): HitterSeasonStats {
 }
 
 function mapPitcherRow(row: Record<string, any>): PitcherSeasonStats {
+  const diffs = computeExpectedDiffs({ avg: row.avg, slg: row.slg, woba: row.woba, xba: row.xba, xslg: row.xslg, xwoba: row.xwoba })
   return {
     dbId: row.id,
     playerId: row.player_id ?? row.id,
@@ -86,17 +102,41 @@ function mapPitcherRow(row: Record<string, any>): PitcherSeasonStats {
     kbbPct: row.kbb_pct,
     mlbGamesCareer: row.mlb_games_career ?? 0,
     isTotal: row.is_total ?? true,
+    // AVG/SLG/OBP/wOBA-against + Expected
+    avg: row.avg,
+    slg: row.slg,
+    obp: row.obp,
+    woba: row.woba,
+    fbVelo: row.fb_velo,
+    xba: row.xba,
+    xslg: row.xslg,
+    xwoba: row.xwoba,
+    avgVsExpected: diffs.avgVsExpected,
+    slgVsExpected: diffs.slgVsExpected,
+    wobaVsExpected: diffs.wobaVsExpected,
+    // Plate discipline
+    chasePct: row.chase_pct,
+    whiffPct: row.whiff_pct,
+    swstrPct: row.swstr_pct,
+    swingPct: row.swing_pct,
+    zSwingPct: row.z_swing_pct,
+    zContactPct: row.z_contact_pct,
+    pullPct: row.pull_pct,
+    pullAirPct: row.pull_air_pct,
+    extension: row.extension,
+    // Batted Ball
     gbPct: row.gb_pct,
     fbPct: row.fb_pct,
     ldPct: row.ld_pct,
     hrFbPct: row.hr_fb_pct,
     hardPct: row.hard_pct,
+    evAvg: row.ev_avg,
+    laAvg: row.la_avg,
     barrelPct: row.barrel_pct,
     hardHitPct: row.hardhit_pct,
+    sweetSpotPct: row.sweet_spot_pct,
     xera: row.xera,
-    xba: row.xba,
-    whiffPct: row.whiff_pct,
-    chasePct: row.chase_pct,
+    // Pitch grades (overall)
     stuffPlus: row.stuff_plus,
     locationPlus: row.location_plus,
     pitchingPlus: row.pitching_plus,
@@ -161,6 +201,108 @@ export async function fetchTeamGamesByLevel(): Promise<Record<string, number>> {
     if (games > 0) result[r.level] = games
   }
   return result
+}
+
+// =====================================================================
+// Multi-source stat priority upserts (ProspectSavant / TJStats / FanGraphs)
+// See lib/priorityMerge.ts for the full explanation of why this can't be
+// a blind upsert — a stat's authoritative source has to be tracked per
+// column so upload order never breaks the priority rule.
+// =====================================================================
+
+/**
+ * Upserts ONE player's row with priority-aware merging. `stats` should
+ * already be in snake_case DB column names (e.g. { wrc_plus: 135 }), the
+ * same shape produced by the column-mapping layer for a given upload
+ * source. Matches the existing row by (name, team, level) — the same key
+ * every other upload in this app already uses.
+ */
+export async function upsertHitterStatWithPriority(row: {
+  name: string
+  team: string
+  level: OrgLevel
+  source: StatSource
+  stats: Record<string, any>
+}) {
+  const { data: existingRows, error: selectError } = await supabase
+    .from('hitter_stats')
+    .select('*')
+    .eq('name', row.name)
+    .eq('team', row.team)
+    .eq('level', row.level)
+    .limit(1)
+  if (selectError) return { error: selectError }
+
+  const existing = existingRows?.[0] ?? null
+  const existingSources: Record<string, number> = existing?.stat_sources ?? {}
+  const { merged, sources } = mergeWithPriority(row.stats, existing, existingSources, row.source, HITTER_STAT_PRIORITY)
+
+  const payload = { ...merged, name: row.name, team: row.team, level: row.level, stat_sources: sources }
+
+  if (existing) {
+    return supabase.from('hitter_stats').update(payload).eq('id', existing.id)
+  }
+  return supabase.from('hitter_stats').insert(payload)
+}
+
+/** Same as above, for pitcher_stats. */
+export async function upsertPitcherStatWithPriority(row: {
+  name: string
+  team: string
+  level: OrgLevel
+  source: StatSource
+  stats: Record<string, any>
+}) {
+  const { data: existingRows, error: selectError } = await supabase
+    .from('pitcher_stats')
+    .select('*')
+    .eq('name', row.name)
+    .eq('team', row.team)
+    .eq('level', row.level)
+    .limit(1)
+  if (selectError) return { error: selectError }
+
+  const existing = existingRows?.[0] ?? null
+  const existingSources: Record<string, number> = existing?.stat_sources ?? {}
+  const { merged, sources } = mergeWithPriority(row.stats, existing, existingSources, row.source, PITCHER_STAT_PRIORITY)
+
+  const payload = { ...merged, name: row.name, team: row.team, level: row.level, stat_sources: sources }
+
+  if (existing) {
+    return supabase.from('pitcher_stats').update(payload).eq('id', existing.id)
+  }
+  return supabase.from('pitcher_stats').insert(payload)
+}
+
+/**
+ * Bulk wrappers — one priority-merge upsert per row, sequentially. This is
+ * an N+1 pattern (a select before every write), which is fine for the
+ * volumes involved here (org-wide uploads are hundreds of rows, not
+ * thousands) and it's what correctness requires — each row's priority
+ * merge depends on reading its own current state first.
+ */
+export async function upsertHitterStatsWithPriority(
+  rows: { name: string; team: string; level: OrgLevel; stats: Record<string, any> }[],
+  source: StatSource,
+) {
+  const errors: any[] = []
+  for (const row of rows) {
+    const { error } = await upsertHitterStatWithPriority({ ...row, source })
+    if (error) errors.push({ row, error })
+  }
+  return { errors }
+}
+
+export async function upsertPitcherStatsWithPriority(
+  rows: { name: string; team: string; level: OrgLevel; stats: Record<string, any> }[],
+  source: StatSource,
+) {
+  const errors: any[] = []
+  for (const row of rows) {
+    const { error } = await upsertPitcherStatWithPriority({ ...row, source })
+    if (error) errors.push({ row, error })
+  }
+  return { errors }
 }
 
 // =====================================================================
@@ -299,6 +441,7 @@ export async function addWriterExpense(row: { year: number; month: number; categ
 export async function deleteWriterExpense(id: string) {
   return supabase.from('writer_expenses').delete().eq('id', id)
 }
+
 /** Tab 2 inline position edit — saves permanently to hitter_stats/pitcher_stats. Only supported for current-season rows. */
 export async function updateHitterPosition(dbId: string, position: string) {
   return supabase.from('hitter_stats').update({ position }).eq('id', dbId)
@@ -470,7 +613,6 @@ export async function fetchHitters(seasons: number[]): Promise<HitterSeasonStats
   if (!supabaseConfigured) return []
   const wantCurrent = seasons.length === 0 || seasons.includes(CURRENT_SEASON)
   const historicalSeasons = seasons.filter((s) => s !== CURRENT_SEASON)
-
   const results: HitterSeasonStats[] = []
 
   if (wantCurrent) {
@@ -501,7 +643,6 @@ export async function fetchPitchers(seasons: number[]): Promise<PitcherSeasonSta
   if (!supabaseConfigured) return []
   const wantCurrent = seasons.length === 0 || seasons.includes(CURRENT_SEASON)
   const historicalSeasons = seasons.filter((s) => s !== CURRENT_SEASON)
-
   const results: PitcherSeasonStats[] = []
 
   if (wantCurrent) {
