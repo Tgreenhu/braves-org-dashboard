@@ -92,7 +92,33 @@ export interface HitterSeasonStats {
   sb: number
   mlbGamesCareer: number // career MLB games (any team) — drives Tab 4 eligibility
   isTotal: boolean // true = this row is the player's combined season line (or their only level)
-  // Batted Ball (optional — only present if that Fangraphs report was uploaded)
+
+  // ---- Multi-source stats (ProspectSavant / TJStats / FanGraphs) ----
+  // Each field below is filled from whichever source's priority cascade
+  // won for that specific stat — see lib/priorityMerge.ts's
+  // HITTER_STAT_PRIORITY for the exact per-stat source order. Optional
+  // since a stat is only populated once at least one of its sources has
+  // been uploaded.
+
+  // Expected
+  woba?: number | null
+  xba?: number | null
+  xslg?: number | null
+  xwoba?: number | null
+  // Computed at read time (not stored) — see computeExpectedDiffs()
+  avgVsExpected?: number | null // AVG - xBA
+  slgVsExpected?: number | null // SLG - xSLG
+  wobaVsExpected?: number | null // wOBA - xwOBA
+
+  // Plate discipline
+  chasePct?: number | null
+  whiffPct?: number | null
+  swingPct?: number | null
+  zSwingPct?: number | null
+  zContactPct?: number | null
+  pullAirPct?: number | null
+
+  // Batted Ball (optional — only present if that report was uploaded)
   gbPct?: number | null
   fbPct?: number | null
   ldPct?: number | null
@@ -107,9 +133,6 @@ export interface HitterSeasonStats {
   laAvg?: number | null
   barrelPct?: number | null
   hardHitPct?: number | null
-  xba?: number | null
-  xslg?: number | null
-  xwoba?: number | null
   // Bat Tracking
   batSpeed?: number | null
   swingLength?: number | null
@@ -139,23 +162,84 @@ export interface PitcherSeasonStats {
   kbbPct: number
   mlbGamesCareer: number
   isTotal: boolean
+
+  // ---- Multi-source stats (ProspectSavant / TJStats / FanGraphs) ----
+  // See lib/priorityMerge.ts's PITCHER_STAT_PRIORITY for the exact
+  // per-stat source order.
+
+  // AVG/SLG/OBP/wOBA-against — added specifically so the Expected diffs
+  // below have something real to subtract from
+  avg?: number | null
+  slg?: number | null
+  obp?: number | null
+  woba?: number | null
+  fbVelo?: number | null
+
+  // Expected
+  xba?: number | null
+  xslg?: number | null
+  xwoba?: number | null
+  // Computed at read time (not stored) — see computeExpectedDiffs()
+  avgVsExpected?: number | null
+  slgVsExpected?: number | null
+  wobaVsExpected?: number | null
+
+  // Plate discipline
+  chasePct?: number | null
+  whiffPct?: number | null
+  swstrPct?: number | null
+  swingPct?: number | null
+  zSwingPct?: number | null
+  zContactPct?: number | null
+  pullPct?: number | null
+  pullAirPct?: number | null
+  extension?: number | null
+
   // Batted Ball
   gbPct?: number | null
   fbPct?: number | null
   ldPct?: number | null
   hrFbPct?: number | null
   hardPct?: number | null
-  // Statcast
+  evAvg?: number | null
+  laAvg?: number | null
   barrelPct?: number | null
   hardHitPct?: number | null
+  sweetSpotPct?: number | null
+
+  // Statcast (pre-existing)
   xera?: number | null
-  xba?: number | null
-  whiffPct?: number | null
-  chasePct?: number | null
-  // Pitch grades (Fangraphs' stuff/location/pitching models)
+
+  // Pitch grades — overall (Fangraphs' stuff/location/pitching models).
+  // Per-pitch-type tjStuff+ and pitch characteristics (Velo/Spin/IVB/HB/
+  // Extension per pitch) live in a separate table — see
+  // pitcher_pitch_characteristics in supabase/multi-source-stats-migration.sql
+  // and PitchCharacteristics below — not here, since a pitcher throwing
+  // 4 of 7 possible pitch types would otherwise mean ~40 mostly-empty
+  // columns on this table.
   stuffPlus?: number | null
   locationPlus?: number | null
   pitchingPlus?: number | null
+}
+
+export type PitchType = 'FF' | 'SI' | 'FS' | 'FC' | 'SL' | 'CU' | 'CH'
+
+/** One row per (pitcher, pitch type) — TJStats-sourced, see multi-source-stats-migration.sql. */
+export interface PitchCharacteristics {
+  id: string
+  pitcherName: string
+  team: string | null
+  level: OrgLevel | null
+  season: number
+  pitchType: PitchType
+  velo: number | null
+  veloMax: number | null
+  spinRate: number | null
+  ivb: number | null // induced vertical break
+  hb: number | null // horizontal break
+  extension: number | null
+  usagePct: number | null
+  tjStuffPlus: number | null
 }
 
 export type PlayerRow =
