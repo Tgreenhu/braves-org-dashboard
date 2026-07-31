@@ -1,16 +1,77 @@
-// =====================================================================
-// ADD THIS TO THE END OF YOUR EXISTING columnMapping.ts — this is an
-// ADDITION, not a replacement for the whole file. Everything above
-// (HITTER_COLUMNS, PITCHER_COLUMNS, mapRow, parseLevel, etc.) stays
-// exactly as it already is.
-//
-// IMPORTANT: these are BEST-EFFORT GUESSES at ProspectSavant's and
-// TJStats' actual export column headers — I don't have real sample files
-// from either site yet. Same pattern as every other source in this app:
-// once you upload a real file and it can't find a column, tell me the
-// actual header text and I'll add it to the right candidates array below.
-// =====================================================================
+export interface ColumnSpec {
+  target: string
+  candidates: string[]
+  parse?: (raw: any) => any
+}
 
+function parseNumber(raw: any): number | null {
+  if (raw === undefined || raw === null || raw === '') return null
+  const cleaned = String(raw).replace('%', '').replace(/,/g, '').trim()
+  const n = Number(cleaned)
+  return Number.isNaN(n) ? null : n
+}
+function parseInteger(raw: any): number | null {
+  const n = parseNumber(raw)
+  return n === null ? null : Math.round(n)
+}
+function parseString(raw: any): string | null {
+  if (raw === undefined || raw === null) return null
+  const s = String(raw).trim()
+  return s === '' ? null : s
+}
+const LEVEL_ALIASES: Record<string, string> = {
+  MLB: 'MLB', AAA: 'AAA', AA: 'AA', 'A+': 'A+', 'HIGH-A': 'A+', 'HIGH A': 'A+',
+  A: 'A', 'A-': 'A', 'LOW-A': 'A', 'SINGLE-A': 'A',
+  FCL: 'FCL', GCL: 'FCL', CPX: 'FCL', ACL: 'FCL', DSL: 'DSL',
+}
+const LEVEL_PRIORITY: Record<string, number> = { MLB: 1, AAA: 2, AA: 3, 'A+': 4, A: 5, FCL: 6, DSL: 7 }
+function parseLevel(raw: any): string | null {
+  const s = parseString(raw)
+  if (!s) return null
+  if (s.includes(',')) {
+    const tokens = s.split(',').map((t) => LEVEL_ALIASES[t.trim().toUpperCase()] ?? t.trim().toUpperCase())
+    tokens.sort((a, b) => (LEVEL_PRIORITY[a] ?? 99) - (LEVEL_PRIORITY[b] ?? 99))
+    return tokens[0]
+  }
+  return LEVEL_ALIASES[s.toUpperCase()] ?? s
+}
+
+export const HITTER_COLUMNS: ColumnSpec[] = [
+  { target: 'name', candidates: ['Name'], parse: parseString },
+  { target: 'team', candidates: ['Team'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseLevel },
+  { target: 'position', candidates: ['Pos', 'Position'], parse: parseString },
+  { target: 'age', candidates: ['Age'], parse: parseInteger },
+]
+export const PITCHER_COLUMNS: ColumnSpec[] = [
+  { target: 'name', candidates: ['Name'], parse: parseString },
+  { target: 'team', candidates: ['Team'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseLevel },
+  { target: 'position', candidates: ['Pos', 'Role'], parse: parseString },
+  { target: 'age', candidates: ['Age'], parse: parseInteger },
+]
+export const COMP_HITTER_COLUMNS: ColumnSpec[] = [
+  { target: 'name', candidates: ['Name'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseLevel },
+  { target: 'age', candidates: ['Age'], parse: parseInteger },
+]
+export const COMP_PITCHER_COLUMNS: ColumnSpec[] = [
+  { target: 'name', candidates: ['Name'], parse: parseString },
+  { target: 'level', candidates: ['Level', 'Lev'], parse: parseLevel },
+  { target: 'age', candidates: ['Age'], parse: parseInteger },
+]
+
+export function mapRow(row: Record<string, any>, columns: ColumnSpec[]): Record<string, any> {
+  const mapped: Record<string, any> = {}
+  const sourceKeys = Object.keys(row)
+  for (const col of columns) {
+    const matchKey = sourceKeys.find((k) => col.candidates.some((c) => c.trim().toLowerCase() === k.trim().toLowerCase()))
+    if (matchKey !== undefined) {
+      mapped[col.target] = col.parse ? col.parse(row[matchKey]) : row[matchKey]
+    }
+  }
+  return mapped
+}
 export const PROSPECTSAVANT_HITTER_COLUMNS: ColumnSpec[] = [
   { target: 'name', candidates: ['Name', 'Player'], parse: parseString },
   { target: 'team', candidates: ['Team', 'Org'], parse: parseString },
