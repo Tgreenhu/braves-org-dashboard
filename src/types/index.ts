@@ -220,6 +220,17 @@ export interface PitcherSeasonStats {
   stuffPlus?: number | null
   locationPlus?: number | null
   pitchingPlus?: number | null
+  tjstuffPlusOverall?: number | null // TJStats' own overall grade — separate from stuffPlus above, not a fallback for it
+  // FanGraphs per-pitch-type Stuff+ (FanGraphs calls the fastball "FA" —
+  // TJStats' per-pitch tjStuff+ uses "FF" and lives in a separate table,
+  // pitcher_pitch_characteristics, since it's one row per pitch type)
+  stfPlusFA?: number | null
+  stfPlusSI?: number | null
+  stfPlusFS?: number | null
+  stfPlusFC?: number | null
+  stfPlusSL?: number | null
+  stfPlusCU?: number | null
+  stfPlusCH?: number | null
 }
 
 export type PitchType = 'FF' | 'SI' | 'FS' | 'FC' | 'SL' | 'ST' | 'CU' | 'CH'
