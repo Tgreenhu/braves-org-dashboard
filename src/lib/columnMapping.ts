@@ -184,12 +184,11 @@ export const TJSTATS_HITTER_COLUMNS: ColumnSpec[] = [
 ]
 
 export const TJSTATS_PITCHER_COLUMNS: ColumnSpec[] = [
-  // Same confirmed convention as the hitter file (player_name/player_team,
-  // snake_case, 0-1 fraction percents) — not yet confirmed against a real
-  // TJStats pitcher export specifically, so treat these as a strong guess
-  // rather than verified. Send a real pitcher file to lock these down too.
-  { target: 'name', candidates: ['player_name', 'Name', 'Player', 'Pitcher'], parse: parseString },
-  { target: 'team', candidates: ['player_team', 'Team'], parse: parseString },
+  // Confirmed against two real TJStats pitcher exports — pitcher files use
+  // pitcher_name/pitcher_team (NOT player_name/player_team like the batter
+  // file does — different prefix convention between the two).
+  { target: 'name', candidates: ['pitcher_name', 'player_name', 'Name', 'Player', 'Pitcher'], parse: parseString },
+  { target: 'team', candidates: ['pitcher_team', 'player_team', 'Team'], parse: parseString },
   { target: 'level', candidates: ['level', 'Level'], parse: parseLevel },
   { target: 'age', candidates: ['age', 'Age'], parse: parseInteger },
   { target: 'avg', candidates: ['avg', 'AVG'], parse: parseNumber },
@@ -201,5 +200,43 @@ export const TJSTATS_PITCHER_COLUMNS: ColumnSpec[] = [
   { target: 'fb_velo', candidates: ['fb_velo', 'fastball_velo', 'FB Velo'], parse: parseNumber },
   { target: 'sweet_spot_pct', candidates: ['sweet_spot_percent', 'swsp_percent', 'SwSP%'], parse: parsePercentFraction },
   { target: 'xba', candidates: ['xba', 'xBA'], parse: parseNumber },
+  // Confirmed from tjstats_pitcher_tjstuff__2026.csv — the pitcher's
+  // OVERALL TJStuff+ grade (kept as its own column, separate from
+  // FanGraphs' Stuff+, per the spec). The file's per-pitch-type stuff_XX
+  // columns are intentionally NOT mapped here — the pitch-characteristics
+  // file below covers per-pitch tjStuff+ with more detail (velo/spin/
+  // movement alongside it), so this file's per-pitch columns would just
+  // be redundant with less information.
+  { target: 'tjstuff_plus_overall', candidates: ['stuff_overall'], parse: parseNumber },
   { target: 'xslg', candidates: ['xslg', 'xSLG'], parse: parseNumber },
+]
+
+// =====================================================================
+// Pitch Characteristics — TJStats only, no priority cascade. One row per
+// (pitcher, pitch type), feeding the separate pitcher_pitch_characteristics
+// table (see supabase/multi-source-stats-migration.sql) rather than
+// pitcher_stats — a pitcher throwing 4 of 7 possible pitch types shouldn't
+// mean ~40 mostly-empty columns on the main table.
+//
+// Confirmed against a real export
+// (tjstats_pitcher_pitch_type_characteristics_2026.csv): pitcher_id,
+// pitcher_name, pitcher_team, pitcher_hand, pitch_type, pitches, velo,
+// max_velo, spin_rate, ivb, hb, extension, release_height, release_side,
+// tj_stuff_plus.
+// =====================================================================
+export const PITCH_CHARACTERISTICS_COLUMNS: ColumnSpec[] = [
+  { target: 'name', candidates: ['pitcher_name'], parse: parseString },
+  { target: 'team', candidates: ['pitcher_team'], parse: parseString },
+  { target: 'pitcher_hand', candidates: ['pitcher_hand'], parse: parseString },
+  { target: 'pitch_type', candidates: ['pitch_type'], parse: parseString },
+  { target: 'pitches', candidates: ['pitches'], parse: parseInteger },
+  { target: 'velo', candidates: ['velo'], parse: parseNumber },
+  { target: 'velo_max', candidates: ['max_velo'], parse: parseNumber },
+  { target: 'spin_rate', candidates: ['spin_rate'], parse: parseNumber },
+  { target: 'ivb', candidates: ['ivb'], parse: parseNumber },
+  { target: 'hb', candidates: ['hb'], parse: parseNumber },
+  { target: 'extension', candidates: ['extension'], parse: parseNumber },
+  { target: 'release_height', candidates: ['release_height'], parse: parseNumber },
+  { target: 'release_side', candidates: ['release_side'], parse: parseNumber },
+  { target: 'tjstuff_plus', candidates: ['tj_stuff_plus'], parse: parseNumber },
 ]
