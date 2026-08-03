@@ -338,22 +338,39 @@ function UploadRow({ source }: { source: UploadSource }) {
                 name: mapped.name as string | undefined,
                 team: (mapped.team as string | undefined) ?? 'ATL',
                 level: (mapped.level as string | undefined) ?? source.defaultLevel ?? null,
+                isTotal: (r as any).is_total !== false, // tagTotalRows marks explicit false for a level-split row; true/undefined = total or single-level
                 stats: mapped,
               }
             })
             .filter((r) => r.name && r.level)
 
-          setRowCount(mappedRows.length)
+          // Same player + same resolved level can appear twice in one file
+          // (e.g. a split-level "Total" row whose comma-joined level
+          // collapses down to match one of that player's individual-level
+          // rows) — collapse to one per key before processing, preferring
+          // the total row, so a same-batch collision can't hit the
+          // database as a literal duplicate insert.
+          const dedupedByKey = new Map<string, (typeof mappedRows)[number]>()
+          for (const row of mappedRows) {
+            const key = `${row.name}|${row.team}|${row.level}`
+            const existing = dedupedByKey.get(key)
+            if (!existing || (row.isTotal && !existing.isTotal)) {
+              dedupedByKey.set(key, row)
+            }
+          }
+          const dedupedRows = Array.from(dedupedByKey.values())
+
+          setRowCount(dedupedRows.length)
 
           if (supabaseConfigured) {
             setStatus('uploading')
             const upsertFn = source.supabaseTable === 'hitter_stats' ? upsertHitterStatsWithPriority : upsertPitcherStatsWithPriority
             const { errors } = await (upsertFn as any)(
-              mappedRows.map((r) => ({ name: r.name!, team: r.team, level: r.level!, stats: r.stats })),
+              dedupedRows.map((r) => ({ name: r.name!, team: r.team, level: r.level!, stats: r.stats })),
               source.statSource,
             )
             if (errors.length > 0) {
-              throw new Error(`${errors.length} of ${mappedRows.length} row(s) failed to save — first error: ${errors[0]?.error?.message ?? 'unknown'}`)
+              throw new Error(`${errors.length} of ${dedupedRows.length} row(s) failed to save — first error: ${errors[0]?.error?.message ?? 'unknown'}`)
             }
           }
 
