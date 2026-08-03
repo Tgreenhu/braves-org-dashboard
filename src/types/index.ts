@@ -222,7 +222,7 @@ export interface PitcherSeasonStats {
   pitchingPlus?: number | null
 }
 
-export type PitchType = 'FF' | 'SI' | 'FS' | 'FC' | 'SL' | 'CU' | 'CH'
+export type PitchType = 'FF' | 'SI' | 'FS' | 'FC' | 'SL' | 'ST' | 'CU' | 'CH'
 
 /** One row per (pitcher, pitch type) — TJStats-sourced, see multi-source-stats-migration.sql. */
 export interface PitchCharacteristics {
