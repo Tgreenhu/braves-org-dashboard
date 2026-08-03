@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpDown, ChevronDown, ChevronUp, Loader2, Inbox, X } from 'lucide-react'
 import DownloadableCard from '@/components/shared/DownloadableCard'
-import { fetchHitters, fetchPitchers, fetchAvailableSeasons, fetchTeamGamesByLevel, updateHitterPosition, updatePitcherPosition } from '@/lib/queries'
+import {
+  fetchHitters,
+  fetchPitchers,
+  fetchAvailableSeasons,
+  fetchTeamGamesByLevel,
+  fetchPitchCharacteristics,
+  updateHitterPosition,
+  updatePitcherPosition,
+  type PitchCharacteristicsRow,
+} from '@/lib/queries'
 import { cacheClear } from '@/lib/cache'
 import { supabaseConfigured } from '@/lib/supabaseClient'
 import { CURRENT_SEASON } from '@/lib/constants'
@@ -9,11 +18,11 @@ import { useClickOutside } from '@/lib/useClickOutside'
 import { ORG_LEVELS, type HitterSeasonStats, type PitcherSeasonStats, type OrgLevel } from '@/types'
 
 type PlayerMode = 'Hitter' | 'Pitcher'
-type HitterView = 'Standard' | 'Batted Ball' | 'Statcast' | 'Bat Tracking'
-type PitcherView = 'Standard' | 'Batted Ball' | 'Statcast' | 'Pitch Grades'
+type HitterView = 'Standard' | 'Expected' | 'Plate' | 'Batted Ball'
+type PitcherView = 'Standard' | 'Expected' | 'Plate' | 'Batted Ball' | 'Stuff' | 'Pitch Characteristics'
 
-const HITTER_VIEWS: HitterView[] = ['Standard', 'Batted Ball', 'Statcast', 'Bat Tracking']
-const PITCHER_VIEWS: PitcherView[] = ['Standard', 'Batted Ball', 'Statcast', 'Pitch Grades']
+const HITTER_VIEWS: HitterView[] = ['Standard', 'Expected', 'Plate', 'Batted Ball']
+const PITCHER_VIEWS: PitcherView[] = ['Standard', 'Expected', 'Plate', 'Batted Ball', 'Stuff', 'Pitch Characteristics']
 
 type Col<T> = { key: keyof T; label: string; numeric?: boolean; fmt?: (v: any) => string }
 
@@ -25,6 +34,10 @@ const dec3 = (v: any) => (v == null ? '—' : Number(v).toFixed(3))
 const dec2 = (v: any) => (v == null ? '—' : Number(v).toFixed(2))
 const dec1 = (v: any) => (v == null ? '—' : Number(v).toFixed(1))
 const int0 = (v: any) => (v == null ? '—' : String(Math.round(Number(v))))
+// Expected-vs-actual diffs (AVG-xBA etc.) read better with an explicit
+// sign — "+.015" (outperforming) vs "-.015" (underperforming) rather than
+// making the reader infer it from a bare negative number.
+const diff3 = (v: any) => (v == null ? '—' : `${Number(v) >= 0 ? '+' : ''}${Number(v).toFixed(3)}`)
 
 const HITTER_ID_COLS: Col<HitterSeasonStats>[] = [
   { key: 'name', label: 'Name' },
@@ -43,40 +56,47 @@ const HITTER_COLUMN_SETS: Record<HitterView, Col<HitterSeasonStats>[]> = {
     { key: 'obp', label: 'OBP', numeric: true, fmt: dec3 },
     { key: 'slg', label: 'SLG', numeric: true, fmt: dec3 },
     { key: 'ops', label: 'OPS', numeric: true, fmt: dec3 },
+    { key: 'woba', label: 'wOBA', numeric: true, fmt: dec3 },
     { key: 'wrcPlus', label: 'wRC+', numeric: true },
-    { key: 'bbPct', label: 'BB%', numeric: true, fmt: pct },
-    { key: 'kPct', label: 'K%', numeric: true, fmt: pct },
     { key: 'hr', label: 'HR', numeric: true },
     { key: 'sb', label: 'SB', numeric: true },
   ],
+  Expected: [
+    ...HITTER_ID_COLS,
+    { key: 'age', label: 'Age', numeric: true },
+    { key: 'avg', label: 'AVG', numeric: true, fmt: dec3 },
+    { key: 'xba', label: 'xBA', numeric: true, fmt: dec3 },
+    { key: 'avgVsExpected', label: 'AVG−xBA', numeric: true, fmt: diff3 },
+    { key: 'slg', label: 'SLG', numeric: true, fmt: dec3 },
+    { key: 'xslg', label: 'xSLG', numeric: true, fmt: dec3 },
+    { key: 'slgVsExpected', label: 'SLG−xSLG', numeric: true, fmt: diff3 },
+    { key: 'woba', label: 'wOBA', numeric: true, fmt: dec3 },
+    { key: 'xwoba', label: 'xwOBA', numeric: true, fmt: dec3 },
+    { key: 'wobaVsExpected', label: 'wOBA−xwOBA', numeric: true, fmt: diff3 },
+  ],
+  Plate: [
+    ...HITTER_ID_COLS,
+    { key: 'age', label: 'Age', numeric: true },
+    { key: 'bbPct', label: 'BB%', numeric: true, fmt: pct },
+    { key: 'kPct', label: 'K%', numeric: true, fmt: pct },
+    { key: 'chasePct', label: 'Chase%', numeric: true, fmt: pct },
+    { key: 'whiffPct', label: 'Whiff%', numeric: true, fmt: pct },
+    { key: 'swingPct', label: 'Swing%', numeric: true, fmt: pct },
+    { key: 'zSwingPct', label: 'Z-Swing%', numeric: true, fmt: pct },
+    { key: 'zContactPct', label: 'Z-Contact%', numeric: true, fmt: pct },
+    { key: 'pullPct', label: 'Pull%', numeric: true, fmt: pct },
+    { key: 'pullAirPct', label: 'Pull Air%', numeric: true, fmt: pct },
+    { key: 'gbPct', label: 'GB%', numeric: true, fmt: pct },
+  ],
   'Batted Ball': [
     ...HITTER_ID_COLS,
-    { key: 'gbPct', label: 'GB%', numeric: true, fmt: pct },
-    { key: 'fbPct', label: 'FB%', numeric: true, fmt: pct },
-    { key: 'ldPct', label: 'LD%', numeric: true, fmt: pct },
-    { key: 'hrFbPct', label: 'HR/FB', numeric: true, fmt: pct },
-    { key: 'pullPct', label: 'Pull%', numeric: true, fmt: pct },
-    { key: 'centPct', label: 'Cent%', numeric: true, fmt: pct },
-    { key: 'oppoPct', label: 'Oppo%', numeric: true, fmt: pct },
-    { key: 'hardPct', label: 'Hard%', numeric: true, fmt: pct },
-  ],
-  Statcast: [
-    ...HITTER_ID_COLS,
+    { key: 'age', label: 'Age', numeric: true },
     { key: 'evAvg', label: 'EV', numeric: true, fmt: dec1 },
     { key: 'evMax', label: 'Max EV', numeric: true, fmt: dec1 },
     { key: 'laAvg', label: 'LA', numeric: true, fmt: dec1 },
     { key: 'barrelPct', label: 'Barrel%', numeric: true, fmt: pct },
     { key: 'hardHitPct', label: 'HardHit%', numeric: true, fmt: pct },
-    { key: 'xba', label: 'xBA', numeric: true, fmt: dec3 },
-    { key: 'xslg', label: 'xSLG', numeric: true, fmt: dec3 },
-    { key: 'xwoba', label: 'xwOBA', numeric: true, fmt: dec3 },
-  ],
-  'Bat Tracking': [
-    ...HITTER_ID_COLS,
     { key: 'batSpeed', label: 'Bat Speed', numeric: true, fmt: dec1 },
-    { key: 'swingLength', label: 'Swing Len', numeric: true, fmt: dec1 },
-    { key: 'squaredUpPct', label: 'Squared-Up%', numeric: true, fmt: pct },
-    { key: 'blastPct', label: 'Blast%', numeric: true, fmt: pct },
   ],
 }
 
@@ -87,7 +107,7 @@ const PITCHER_ID_COLS: Col<PitcherSeasonStats>[] = [
   { key: 'position', label: 'Role' },
 ]
 
-const PITCHER_COLUMN_SETS: Record<PitcherView, Col<PitcherSeasonStats>[]> = {
+const PITCHER_COLUMN_SETS: Record<Exclude<PitcherView, 'Pitch Characteristics'>, Col<PitcherSeasonStats>[]> = {
   Standard: [
     ...PITCHER_ID_COLS,
     { key: 'age', label: 'Age', numeric: true },
@@ -98,34 +118,88 @@ const PITCHER_COLUMN_SETS: Record<PitcherView, Col<PitcherSeasonStats>[]> = {
     { key: 'fip', label: 'FIP', numeric: true, fmt: dec2 },
     { key: 'siera', label: 'SIERA', numeric: true, fmt: dec2 },
     { key: 'whip', label: 'WHIP', numeric: true, fmt: dec2 },
+    { key: 'fbVelo', label: 'FB Velo', numeric: true, fmt: dec1 },
+  ],
+  Expected: [
+    ...PITCHER_ID_COLS,
+    { key: 'age', label: 'Age', numeric: true },
+    { key: 'avg', label: 'AVG', numeric: true, fmt: dec3 },
+    { key: 'xba', label: 'xBA', numeric: true, fmt: dec3 },
+    { key: 'avgVsExpected', label: 'AVG−xBA', numeric: true, fmt: diff3 },
+    { key: 'slg', label: 'SLG', numeric: true, fmt: dec3 },
+    { key: 'xslg', label: 'xSLG', numeric: true, fmt: dec3 },
+    { key: 'slgVsExpected', label: 'SLG−xSLG', numeric: true, fmt: diff3 },
+    { key: 'woba', label: 'wOBA', numeric: true, fmt: dec3 },
+    { key: 'xwoba', label: 'xwOBA', numeric: true, fmt: dec3 },
+    { key: 'wobaVsExpected', label: 'wOBA−xwOBA', numeric: true, fmt: diff3 },
+  ],
+  Plate: [
+    ...PITCHER_ID_COLS,
+    { key: 'age', label: 'Age', numeric: true },
     { key: 'kPct', label: 'K%', numeric: true, fmt: pct },
     { key: 'bbPct', label: 'BB%', numeric: true, fmt: pct },
     { key: 'kbbPct', label: 'K-BB%', numeric: true, fmt: pct },
+    { key: 'chasePct', label: 'Chase%', numeric: true, fmt: pct },
+    { key: 'whiffPct', label: 'Whiff%', numeric: true, fmt: pct },
+    { key: 'swstrPct', label: 'SwSTR%', numeric: true, fmt: pct },
+    { key: 'swingPct', label: 'Swing%', numeric: true, fmt: pct },
+    { key: 'zSwingPct', label: 'Z-Swing%', numeric: true, fmt: pct },
+    { key: 'zContactPct', label: 'Z-Contact%', numeric: true, fmt: pct },
+    { key: 'pullPct', label: 'Pull%', numeric: true, fmt: pct },
+    { key: 'pullAirPct', label: 'Pull Air%', numeric: true, fmt: pct },
+    { key: 'gbPct', label: 'GB%', numeric: true, fmt: pct },
+    { key: 'extension', label: 'Extension', numeric: true, fmt: dec2 },
   ],
   'Batted Ball': [
     ...PITCHER_ID_COLS,
-    { key: 'gbPct', label: 'GB%', numeric: true, fmt: pct },
-    { key: 'fbPct', label: 'FB%', numeric: true, fmt: pct },
-    { key: 'ldPct', label: 'LD%', numeric: true, fmt: pct },
-    { key: 'hrFbPct', label: 'HR/FB', numeric: true, fmt: pct },
-    { key: 'hardPct', label: 'Hard%', numeric: true, fmt: pct },
-  ],
-  Statcast: [
-    ...PITCHER_ID_COLS,
+    { key: 'age', label: 'Age', numeric: true },
+    { key: 'evAvg', label: 'EV', numeric: true, fmt: dec1 },
+    { key: 'laAvg', label: 'LA', numeric: true, fmt: dec1 },
     { key: 'barrelPct', label: 'Barrel%', numeric: true, fmt: pct },
     { key: 'hardHitPct', label: 'HardHit%', numeric: true, fmt: pct },
-    { key: 'xera', label: 'xERA', numeric: true, fmt: dec2 },
-    { key: 'xba', label: 'xBA', numeric: true, fmt: dec3 },
-    { key: 'whiffPct', label: 'Whiff%', numeric: true, fmt: pct },
-    { key: 'chasePct', label: 'Chase%', numeric: true, fmt: pct },
+    { key: 'sweetSpotPct', label: 'SwSP%', numeric: true, fmt: pct },
   ],
-  'Pitch Grades': [
+  Stuff: [
     ...PITCHER_ID_COLS,
-    { key: 'stuffPlus', label: 'Stuff+', numeric: true, fmt: int0 },
+    { key: 'age', label: 'Age', numeric: true },
+    { key: 'stuffPlus', label: 'Stuff+ (FG)', numeric: true, fmt: int0 },
+    { key: 'tjstuffPlusOverall', label: 'Stuff+ (TJS)', numeric: true, fmt: int0 },
     { key: 'locationPlus', label: 'Location+', numeric: true, fmt: int0 },
     { key: 'pitchingPlus', label: 'Pitching+', numeric: true, fmt: int0 },
+    { key: 'stfPlusFA', label: 'Stf+ FA', numeric: true, fmt: int0 },
+    { key: '_tjStuffFF' as any, label: 'tjStuff+ FF', numeric: true, fmt: int0 },
+    { key: 'stfPlusSI', label: 'Stf+ SI', numeric: true, fmt: int0 },
+    { key: '_tjStuffSI' as any, label: 'tjStuff+ SI', numeric: true, fmt: int0 },
+    { key: 'stfPlusFS', label: 'Stf+ FS', numeric: true, fmt: int0 },
+    { key: '_tjStuffFS' as any, label: 'tjStuff+ FS', numeric: true, fmt: int0 },
+    { key: 'stfPlusFC', label: 'Stf+ FC', numeric: true, fmt: int0 },
+    { key: '_tjStuffFC' as any, label: 'tjStuff+ FC', numeric: true, fmt: int0 },
+    { key: 'stfPlusSL', label: 'Stf+ SL', numeric: true, fmt: int0 },
+    { key: '_tjStuffSL' as any, label: 'tjStuff+ SL', numeric: true, fmt: int0 },
+    { key: 'stfPlusCU', label: 'Stf+ CU', numeric: true, fmt: int0 },
+    { key: '_tjStuffCU' as any, label: 'tjStuff+ CU', numeric: true, fmt: int0 },
+    { key: 'stfPlusCH', label: 'Stf+ CH', numeric: true, fmt: int0 },
+    { key: '_tjStuffCH' as any, label: 'tjStuff+ CH', numeric: true, fmt: int0 },
   ],
 }
+
+// Pitch Characteristics is a fundamentally different shape of data (one
+// row per pitcher PER PITCH TYPE, not one row per pitcher) — TJStats only,
+// no priority cascade, lives in its own table. Kept as its own column set
+// / render path rather than forced into the Col<PitcherSeasonStats> mold.
+const PITCH_CHAR_COLS: Col<PitchCharacteristicsRow>[] = [
+  { key: 'name', label: 'Name' },
+  { key: 'level', label: 'Lvl' },
+  { key: 'pitchType', label: 'Pitch' },
+  { key: 'pitches', label: 'Pitches', numeric: true },
+  { key: 'velo', label: 'Velo', numeric: true, fmt: dec1 },
+  { key: 'veloMax', label: 'Max', numeric: true, fmt: dec1 },
+  { key: 'spinRate', label: 'Spin', numeric: true, fmt: int0 },
+  { key: 'ivb', label: 'IVB', numeric: true, fmt: dec1 },
+  { key: 'hb', label: 'HB', numeric: true, fmt: dec1 },
+  { key: 'extension', label: 'EXT', numeric: true, fmt: dec2 },
+  { key: 'tjstuffPlus', label: 'tjStuff+', numeric: true, fmt: int0 },
+]
 
 export default function Players() {
   const [mode, setMode] = useState<PlayerMode>('Hitter')
@@ -143,11 +217,13 @@ export default function Players() {
   const [availableYears, setAvailableYears] = useState<number[]>([CURRENT_SEASON])
   const [hitters, setHitters] = useState<HitterSeasonStats[] | null>(null)
   const [pitchers, setPitchers] = useState<PitcherSeasonStats[] | null>(null)
+  const [pitchChars, setPitchChars] = useState<PitchCharacteristicsRow[] | null>(null)
   const [teamGamesByLevel, setTeamGamesByLevel] = useState<Record<string, number>>({})
 
   useEffect(() => {
     fetchAvailableSeasons().then(setAvailableYears)
     fetchTeamGamesByLevel().then(setTeamGamesByLevel)
+    fetchPitchCharacteristics().then(setPitchChars)
   }, [])
 
   // Current season lives in hitter_stats/pitcher_stats; any other year comes
@@ -164,11 +240,59 @@ export default function Players() {
 
   const loading = hitters === null || pitchers === null
 
-  const columns = mode === 'Hitter' ? HITTER_COLUMN_SETS[hitterView] : PITCHER_COLUMN_SETS[pitcherView]
+  // Pivots the long-format (one row per pitcher+pitch-type) tjStuff+ data
+  // into per-pitcher columns for the Stuff view — a pitcher's Stuff tab
+  // row needs "their tjStuff+ on their slider" sitting next to "their
+  // tjStuff+ on their fastball", not a separate row per pitch.
+  const tjStuffByPitcherAndType = useMemo(() => {
+    const map = new Map<string, Record<string, number | null>>()
+    for (const row of pitchChars ?? []) {
+      const key = row.name.trim().toLowerCase()
+      if (!map.has(key)) map.set(key, {})
+      map.get(key)![row.pitchType] = row.tjstuffPlus
+    }
+    return map
+  }, [pitchChars])
+
+  const enrichedPitchers = useMemo(() => {
+    return (pitchers ?? []).map((p) => {
+      const byType = tjStuffByPitcherAndType.get(p.name.trim().toLowerCase()) ?? {}
+      return {
+        ...p,
+        _tjStuffFF: byType['FF'] ?? null,
+        _tjStuffSI: byType['SI'] ?? null,
+        _tjStuffFS: byType['FS'] ?? null,
+        _tjStuffFC: byType['FC'] ?? null,
+        _tjStuffSL: byType['SL'] ?? null,
+        _tjStuffCU: byType['CU'] ?? null,
+        _tjStuffCH: byType['CH'] ?? null,
+      }
+    })
+  }, [pitchers, tjStuffByPitcherAndType])
+
+  const isPitchCharView = mode === 'Pitcher' && pitcherView === 'Pitch Characteristics'
+  const columns = isPitchCharView ? PITCH_CHAR_COLS : mode === 'Hitter' ? HITTER_COLUMN_SETS[hitterView] : PITCHER_COLUMN_SETS[pitcherView as Exclude<PitcherView, 'Pitch Characteristics'>]
 
   const rows = useMemo(() => {
-    const base: (HitterSeasonStats | PitcherSeasonStats)[] = (mode === 'Hitter' ? hitters : pitchers) ?? []
+    if (isPitchCharView) {
+      let filtered = (pitchChars ?? []).filter((r) => {
+        if (levelFilter.length && r.level && !levelFilter.includes(r.level)) return false
+        if (search && !r.name.toLowerCase().includes(search.toLowerCase())) return false
+        return true
+      })
+      filtered = [...filtered].sort((a: any, b: any) => {
+        const av = a[sortKey]
+        const bv = b[sortKey]
+        if (av == null && bv == null) return 0
+        if (av == null) return 1
+        if (bv == null) return -1
+        if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av)
+        return sortDir === 'asc' ? av - bv : bv - av
+      })
+      return filtered
+    }
 
+    const base: any[] = mode === 'Hitter' ? hitters ?? [] : enrichedPitchers
     let filtered = base.filter((p) => {
       if (levelFilter.length && !levelFilter.includes(p.level)) return false
       if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false
@@ -204,7 +328,7 @@ export default function Players() {
     })
 
     return filtered
-  }, [mode, hitters, pitchers, levelFilter, search, minPA, minIP, qualifiedOnly, teamGamesByLevel, sortKey, sortDir])
+  }, [isPitchCharView, pitchChars, mode, hitters, enrichedPitchers, levelFilter, search, minPA, minIP, qualifiedOnly, teamGamesByLevel, sortKey, sortDir])
 
   const toggleSort = (key: string) => {
     if (sortKey === key) {
@@ -231,6 +355,20 @@ export default function Players() {
     setMode(m)
     setSortKey(m === 'Hitter' ? 'ops' : 'era')
     setSortDir(m === 'Hitter' ? 'desc' : 'asc')
+  }
+
+  const switchPitcherView = (v: PitcherView) => {
+    setPitcherView(v)
+    // Pitch Characteristics has its own columns entirely — reset sort to
+    // something that actually exists in that shape instead of carrying
+    // over a key (e.g. "era") that isn't a column there.
+    if (v === 'Pitch Characteristics') {
+      setSortKey('tjstuffPlus')
+      setSortDir('desc')
+    } else if (sortKey === 'tjstuffPlus') {
+      setSortKey('era')
+      setSortDir('asc')
+    }
   }
 
   return (
@@ -273,28 +411,31 @@ export default function Players() {
             className="min-w-[140px] flex-1 rounded-full border border-navy-950/10 px-3 py-1.5 text-xs sm:max-w-[220px]"
           />
 
-          <label className="flex items-center gap-1.5 text-xs text-navy-900/70">
-            {mode === 'Hitter' ? 'Min PA' : 'Min IP'}
-            <input
-              type="number"
-              min={0}
-              value={mode === 'Hitter' ? minPA : minIP}
-              onChange={(e) =>
-                mode === 'Hitter' ? setMinPA(Number(e.target.value)) : setMinIP(Number(e.target.value))
-              }
-              className="w-16 rounded-md border border-navy-950/10 px-2 py-1 text-xs"
-            />
-          </label>
-
-          <label className="flex items-center gap-1.5 rounded-full border border-navy-950/10 px-3 py-1.5 text-xs font-medium text-navy-800">
-            <input
-              type="checkbox"
-              checked={qualifiedOnly}
-              onChange={(e) => setQualifiedOnly(e.target.checked)}
-              className="accent-brave-red"
-            />
-            Qualified
-          </label>
+          {!isPitchCharView && (
+            <>
+              <label className="flex items-center gap-1.5 text-xs text-navy-900/70">
+                {mode === 'Hitter' ? 'Min PA' : 'Min IP'}
+                <input
+                  type="number"
+                  min={0}
+                  value={mode === 'Hitter' ? minPA : minIP}
+                  onChange={(e) =>
+                    mode === 'Hitter' ? setMinPA(Number(e.target.value)) : setMinIP(Number(e.target.value))
+                  }
+                  className="w-16 rounded-md border border-navy-950/10 px-2 py-1 text-xs"
+                />
+              </label>
+              <label className="flex items-center gap-1.5 rounded-full border border-navy-950/10 px-3 py-1.5 text-xs font-medium text-navy-800">
+                <input
+                  type="checkbox"
+                  checked={qualifiedOnly}
+                  onChange={(e) => setQualifiedOnly(e.target.checked)}
+                  className="accent-brave-red"
+                />
+                Qualified
+              </label>
+            </>
+          )}
         </div>
 
         {/* View tabs — swap which columns show instead of one giant scrolling table */}
@@ -302,7 +443,7 @@ export default function Players() {
           {(mode === 'Hitter' ? HITTER_VIEWS : PITCHER_VIEWS).map((v) => (
             <button
               key={v}
-              onClick={() => (mode === 'Hitter' ? setHitterView(v as HitterView) : setPitcherView(v as PitcherView))}
+              onClick={() => (mode === 'Hitter' ? setHitterView(v as HitterView) : switchPitcherView(v as PitcherView))}
               className="pill-button"
               data-active={mode === 'Hitter' ? hitterView === v : pitcherView === v}
             >
@@ -313,12 +454,14 @@ export default function Players() {
 
         {/* Multi-select filters */}
         <div className="flex flex-wrap gap-3">
-          <MultiSelectFilter
-            label="Year"
-            options={availableYears.map(String)}
-            selected={yearFilter.map(String)}
-            onChange={(v) => setYearFilter(v.map(Number))}
-          />
+          {!isPitchCharView && (
+            <MultiSelectFilter
+              label="Year"
+              options={availableYears.map(String)}
+              selected={yearFilter.map(String)}
+              onChange={(v) => setYearFilter(v.map(Number))}
+            />
+          )}
           <MultiSelectFilter
             label="Level"
             options={ORG_LEVELS}
@@ -328,7 +471,16 @@ export default function Players() {
         </div>
       </div>
 
-      {loading ? (
+      {isPitchCharView && pitchChars === null ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-sm text-navy-900/40">
+          <Loader2 size={16} className="animate-spin" /> Loading pitch characteristics…
+        </div>
+      ) : isPitchCharView && (pitchChars?.length ?? 0) === 0 ? (
+        <EmptyState
+          title="No pitch characteristics uploaded yet"
+          detail="Head to the Upload tab's Pitch Characteristics section to pull in TJStats' per-pitch-type data."
+        />
+      ) : loading ? (
         <div className="flex items-center justify-center gap-2 py-16 text-sm text-navy-900/40">
           <Loader2 size={16} className="animate-spin" /> Loading players…
         </div>
@@ -337,16 +489,16 @@ export default function Players() {
           title="Supabase isn't connected"
           detail="Add your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (see .env.example) to see real players here."
         />
-      ) : (hitters?.length ?? 0) === 0 && (pitchers?.length ?? 0) === 0 ? (
+      ) : !isPitchCharView && (hitters?.length ?? 0) === 0 && (pitchers?.length ?? 0) === 0 ? (
         <EmptyState
           title="No players uploaded yet"
           detail="Head to the Upload tab and pull in a Fangraphs export to populate this table."
         />
       ) : (
         <DownloadableCard
-          title={`Braves Org ${mode}s — ${mode === 'Hitter' ? hitterView : pitcherView}`}
-          subtitle={`${rows.length} players shown`}
-          filename={`braves-org-players-${mode.toLowerCase()}-${(mode === 'Hitter' ? hitterView : pitcherView).toLowerCase().replace(/\s+/g, '-')}`}
+          title={`Braves Org ${mode}s — ${isPitchCharView ? 'Pitch Characteristics' : mode === 'Hitter' ? hitterView : pitcherView}`}
+          subtitle={`${rows.length} ${isPitchCharView ? 'pitch-type rows' : 'players'} shown`}
+          filename={`braves-org-players-${mode.toLowerCase()}-${(isPitchCharView ? 'pitch-characteristics' : mode === 'Hitter' ? hitterView : pitcherView).toLowerCase().replace(/\s+/g, '-')}`}
         >
           <div className="max-h-[70vh] overflow-auto">
             <table className="stat-table">
@@ -372,10 +524,10 @@ export default function Players() {
               </thead>
               <tbody>
                 {rows.map((row: any) => (
-                  <tr key={`${row.playerId}-${row.season}`}>
+                  <tr key={isPitchCharView ? row.id : `${row.playerId}-${row.season}`}>
                     {columns.map((col) => (
                       <td key={String(col.key)}>
-                        {col.key === 'position' && row.season === CURRENT_SEASON ? (
+                        {!isPitchCharView && col.key === 'position' && row.season === CURRENT_SEASON ? (
                           <select
                             value={row.position ?? ''}
                             onChange={(e) => handlePositionEdit(row, e.target.value)}
@@ -402,7 +554,7 @@ export default function Players() {
                 {rows.length === 0 && (
                   <tr>
                     <td colSpan={columns.length} className="py-6 text-center text-navy-900/40">
-                      No players match these filters.
+                      No {isPitchCharView ? 'pitch-type rows' : 'players'} match these filters.
                     </td>
                   </tr>
                 )}
@@ -439,9 +591,11 @@ function MultiSelectFilter({
   const [open, setOpen] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
   useClickOutside(wrapperRef, () => setOpen(false), open)
+
   const toggle = (opt: string) => {
     onChange(selected.includes(opt) ? selected.filter((o) => o !== opt) : [...selected, opt])
   }
+
   return (
     <div className="relative" ref={wrapperRef}>
       <button onClick={() => setOpen((o) => !o)} className="pill-button" data-active={selected.length > 0}>
