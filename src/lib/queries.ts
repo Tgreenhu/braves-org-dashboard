@@ -326,6 +326,58 @@ export async function upsertPitcherStatsWithPriority(
   return { errors }
 }
 
+/**
+ * Pitch Characteristics — TJStats only, one row per (pitcher, pitch
+ * type). No priority-merge needed since nothing else provides this level
+ * of per-pitch detail; a plain batch upsert on the compound key is
+ * sufficient. `level` and `season` aren't in TJStats' export (see
+ * columnMapping.ts), so they're supplied by the caller — same
+ * defaultLevel-fallback pattern as every other TJStats upload.
+ */
+export async function upsertPitchCharacteristics(
+  rows: {
+    name: string
+    team: string | null
+    level: OrgLevel
+    season: number
+    pitchType: string
+    pitcherHand: string | null
+    pitches: number | null
+    velo: number | null
+    veloMax: number | null
+    spinRate: number | null
+    ivb: number | null
+    hb: number | null
+    extension: number | null
+    releaseHeight: number | null
+    releaseSide: number | null
+    tjstuffPlus: number | null
+  }[],
+) {
+  return supabase.from('pitcher_pitch_characteristics').upsert(
+    rows.map((r) => ({
+      pitcher_name: r.name,
+      team: r.team,
+      level: r.level,
+      season: r.season,
+      pitch_type: r.pitchType,
+      pitcher_hand: r.pitcherHand,
+      pitches: r.pitches,
+      velo: r.velo,
+      velo_max: r.veloMax,
+      spin_rate: r.spinRate,
+      ivb: r.ivb,
+      hb: r.hb,
+      extension: r.extension,
+      release_height: r.releaseHeight,
+      release_side: r.releaseSide,
+      tjstuff_plus: r.tjstuffPlus,
+      updated_at: new Date().toISOString(),
+    })),
+    { onConflict: 'pitcher_name,team,level,season,pitch_type' },
+  )
+}
+
 // =====================================================================
 // Tab 7: Writer
 // =====================================================================
