@@ -21,9 +21,11 @@ import {
   PROSPECTSAVANT_PITCHER_COLUMNS,
   TJSTATS_HITTER_COLUMNS,
   TJSTATS_PITCHER_COLUMNS,
+  PITCH_CHARACTERISTICS_COLUMNS,
 } from '@/lib/columnMapping'
 import { slugify } from '@/lib/downloadImage'
-import { upsertHitterStatsWithPriority, upsertPitcherStatsWithPriority } from '@/lib/queries'
+import { upsertHitterStatsWithPriority, upsertPitcherStatsWithPriority, upsertPitchCharacteristics } from '@/lib/queries'
+import { CURRENT_SEASON } from '@/lib/constants'
 import type { StatSource } from '@/lib/priorityMerge'
 
 interface QuickLink {
@@ -297,6 +299,8 @@ export default function Upload() {
           </div>
         </div>
       ))}
+
+      <PitchCharacteristicsSection />
     </div>
   )
 }
@@ -399,6 +403,132 @@ function UploadRow({ source }: { source: UploadSource }) {
           </a>
         ))}
       </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".csv"
+        className="hidden"
+        onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+      />
+      <button
+        onClick={() => inputRef.current?.click()}
+        className="flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-navy-950/15 py-2.5 text-xs font-medium text-navy-900/60 hover:border-navy-600 hover:text-navy-900"
+      >
+        <UploadCloud size={14} /> Upload CSV
+      </button>
+      {(status === 'parsing' || status === 'uploading') && (
+        <p className="text-[11px] text-navy-900/50">{status === 'uploading' ? 'Saving...' : 'Parsing...'}</p>
+      )}
+      {status === 'success' && (
+        <p className="flex items-center gap-1 text-[11px] text-emerald-600">
+          <CheckCircle2 size={12} /> Loaded {rowCount} rows
+          {!supabaseConfigured && ' (local preview only)'}
+        </p>
+      )}
+      {status === 'error' && (
+        <p className="flex items-center gap-1 text-[11px] text-brave-red">
+          <AlertCircle size={12} /> {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// =====================================================================
+// Pitch Characteristics — TJStats only, one row per (pitcher, pitch
+// type), writing to pitcher_pitch_characteristics instead of
+// pitcher_stats. Different shape from every other upload on this page
+// (multiple rows per pitcher, no priority cascade needed since only one
+// source provides this), so it gets its own small component rather than
+// reusing UploadRow.
+// =====================================================================
+
+const PITCH_CHAR_LEVELS = ['MLB', 'AAA', 'AA', 'A+', 'A', 'FCL', 'DSL'] as const
+
+function PitchCharacteristicsSection() {
+  return (
+    <div className="space-y-2.5">
+      <div>
+        <h3 className="text-sm font-semibold text-navy-900 sm:text-base">Pitch Characteristics (TJStats only)</h3>
+        <p className="text-[11px] text-navy-900/45">
+          Per-pitch-type velo/spin/movement/tjStuff+ — one row per pitcher per pitch type they
+          actually throw. Pick the level for whichever file you're uploading; TJStats' export
+          doesn't include a level column, so it's supplied here instead.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {PITCH_CHAR_LEVELS.map((level) => (
+          <PitchCharacteristicsRow key={level} level={level} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function PitchCharacteristicsRow({ level }: { level: string }) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [status, setStatus] = useState<RowStatus>('idle')
+  const [rowCount, setRowCount] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleFile = (file: File) => {
+    setStatus('parsing')
+    setError(null)
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        try {
+          const rows = results.data as Record<string, any>[]
+          const mappedRows = rows
+            .map((r) => {
+              const mapped = mapRow(r, PITCH_CHARACTERISTICS_COLUMNS)
+              return {
+                name: mapped.name as string | undefined,
+                team: (mapped.team as string | undefined) ?? null,
+                level,
+                season: CURRENT_SEASON,
+                pitchType: mapped.pitch_type as string | undefined,
+                pitcherHand: (mapped.pitcher_hand as string | undefined) ?? null,
+                pitches: (mapped.pitches as number | undefined) ?? null,
+                velo: (mapped.velo as number | undefined) ?? null,
+                veloMax: (mapped.velo_max as number | undefined) ?? null,
+                spinRate: (mapped.spin_rate as number | undefined) ?? null,
+                ivb: (mapped.ivb as number | undefined) ?? null,
+                hb: (mapped.hb as number | undefined) ?? null,
+                extension: (mapped.extension as number | undefined) ?? null,
+                releaseHeight: (mapped.release_height as number | undefined) ?? null,
+                releaseSide: (mapped.release_side as number | undefined) ?? null,
+                tjstuffPlus: (mapped.tjstuff_plus as number | undefined) ?? null,
+              }
+            })
+            .filter((r) => r.name && r.pitchType)
+
+          setRowCount(mappedRows.length)
+
+          if (supabaseConfigured && mappedRows.length > 0) {
+            setStatus('uploading')
+            const { error: upsertError } = await upsertPitchCharacteristics(mappedRows as any)
+            if (upsertError) throw upsertError
+          }
+
+          cacheClear()
+          setStatus('success')
+        } catch (e: any) {
+          setError(e.message ?? 'Upload failed')
+          setStatus('error')
+        }
+      },
+      error: (err) => {
+        setError(err.message)
+        setStatus('error')
+      },
+    })
+  }
+
+  return (
+    <div className="card flex flex-col gap-2.5 p-3.5">
+      <h4 className="text-sm font-semibold text-navy-950">{level}</h4>
       <input
         ref={inputRef}
         type="file"
