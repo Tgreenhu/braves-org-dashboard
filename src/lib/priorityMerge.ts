@@ -105,6 +105,13 @@ export const PITCHER_STAT_PRIORITY: Record<string, StatSource[]> = {
   location_plus: ['FanGraphs'],
   pitching_plus: ['FanGraphs'],
   tjstuff_plus_overall: ['TJStats'], // TJStats' own overall grade — kept separate from FanGraphs' Stuff+ per the spec, not a fallback for it
+  stf_plus_fa: ['FanGraphs'],
+  stf_plus_si: ['FanGraphs'],
+  stf_plus_fs: ['FanGraphs'],
+  stf_plus_fc: ['FanGraphs'],
+  stf_plus_sl: ['FanGraphs'],
+  stf_plus_cu: ['FanGraphs'],
+  stf_plus_ch: ['FanGraphs'],
 }
 
 /**
