@@ -242,7 +242,19 @@ export async function upsertHitterStatWithPriority(row: {
   if (existing) {
     return supabase.from('hitter_stats').update(payload).eq('id', existing.id)
   }
-  return supabase.from('hitter_stats').insert(payload)
+  const insertResult = await supabase.from('hitter_stats').insert(payload)
+  if (insertResult.error?.code === '23505') {
+    // Row already existed despite the select above not finding it (e.g. a
+    // same-batch race, or a stray pre-existing duplicate) — re-fetch and
+    // update instead of treating this as a real failure.
+    const { data: retryRows } = await supabase.from('hitter_stats').select('*').eq('name', row.name).eq('team', row.team).eq('level', row.level).limit(1)
+    const retryExisting = retryRows?.[0]
+    if (retryExisting) {
+      const retryMerge = mergeWithPriority(row.stats, retryExisting, retryExisting.stat_sources ?? {}, row.source, HITTER_STAT_PRIORITY)
+      return supabase.from('hitter_stats').update({ ...retryMerge.merged, name: row.name, team: row.team, level: row.level, stat_sources: retryMerge.sources }).eq('id', retryExisting.id)
+    }
+  }
+  return insertResult
 }
 
 /** Same as above, for pitcher_stats. */
@@ -271,7 +283,16 @@ export async function upsertPitcherStatWithPriority(row: {
   if (existing) {
     return supabase.from('pitcher_stats').update(payload).eq('id', existing.id)
   }
-  return supabase.from('pitcher_stats').insert(payload)
+  const insertResult = await supabase.from('pitcher_stats').insert(payload)
+  if (insertResult.error?.code === '23505') {
+    const { data: retryRows } = await supabase.from('pitcher_stats').select('*').eq('name', row.name).eq('team', row.team).eq('level', row.level).limit(1)
+    const retryExisting = retryRows?.[0]
+    if (retryExisting) {
+      const retryMerge = mergeWithPriority(row.stats, retryExisting, retryExisting.stat_sources ?? {}, row.source, PITCHER_STAT_PRIORITY)
+      return supabase.from('pitcher_stats').update({ ...retryMerge.merged, name: row.name, team: row.team, level: row.level, stat_sources: retryMerge.sources }).eq('id', retryExisting.id)
+    }
+  }
+  return insertResult
 }
 
 /**
