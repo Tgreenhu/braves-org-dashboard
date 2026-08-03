@@ -140,6 +140,14 @@ function mapPitcherRow(row: Record<string, any>): PitcherSeasonStats {
     stuffPlus: row.stuff_plus,
     locationPlus: row.location_plus,
     pitchingPlus: row.pitching_plus,
+    tjstuffPlusOverall: row.tjstuff_plus_overall,
+    stfPlusFA: row.stf_plus_fa,
+    stfPlusSI: row.stf_plus_si,
+    stfPlusFS: row.stf_plus_fs,
+    stfPlusFC: row.stf_plus_fc,
+    stfPlusSL: row.stf_plus_sl,
+    stfPlusCU: row.stf_plus_cu,
+    stfPlusCH: row.stf_plus_ch,
   }
 }
 
