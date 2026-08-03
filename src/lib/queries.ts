@@ -327,6 +327,57 @@ export async function upsertPitcherStatsWithPriority(
 }
 
 /**
+ * Pitch Characteristics — one row per (pitcher, pitch type), for the
+ * Players tab's new "Pitch Characteristics" view. Current season only
+ * (matches every other current-season read in this file — not cached,
+ * for the same reason: this can change from outside the app).
+ */
+export interface PitchCharacteristicsRow {
+  id: string
+  name: string
+  team: string | null
+  level: OrgLevel | null
+  season: number
+  pitchType: string
+  pitcherHand: string | null
+  pitches: number | null
+  velo: number | null
+  veloMax: number | null
+  spinRate: number | null
+  ivb: number | null
+  hb: number | null
+  extension: number | null
+  releaseHeight: number | null
+  releaseSide: number | null
+  tjstuffPlus: number | null
+}
+
+export async function fetchPitchCharacteristics(season: number = CURRENT_SEASON): Promise<PitchCharacteristicsRow[]> {
+  if (!supabaseConfigured) return []
+  const { data, error } = await supabase.from('pitcher_pitch_characteristics').select('*').eq('season', season)
+  if (error || !data) return []
+  return data.map((r: any) => ({
+    id: r.id,
+    name: r.pitcher_name,
+    team: r.team,
+    level: r.level,
+    season: r.season,
+    pitchType: r.pitch_type,
+    pitcherHand: r.pitcher_hand,
+    pitches: r.pitches,
+    velo: r.velo,
+    veloMax: r.velo_max,
+    spinRate: r.spin_rate,
+    ivb: r.ivb,
+    hb: r.hb,
+    extension: r.extension,
+    releaseHeight: r.release_height,
+    releaseSide: r.release_side,
+    tjstuffPlus: r.tjstuff_plus,
+  }))
+}
+
+/**
  * Pitch Characteristics — TJStats only, one row per (pitcher, pitch
  * type). No priority-merge needed since nothing else provides this level
  * of per-pitch detail; a plain batch upsert on the compound key is
