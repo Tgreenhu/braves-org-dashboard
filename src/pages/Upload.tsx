@@ -266,6 +266,59 @@ const UPLOAD_GROUPS: UploadGroup[] = [
 
 type RowStatus = 'idle' | 'parsing' | 'uploading' | 'success' | 'error'
 
+// Shared by every upload tile on this page — drag files onto the dropzone
+// (only .csv files are accepted, anything else dropped is ignored) or
+// click it to open a normal multi-select file picker.
+function useFileDrop(onFiles: (files: File[]) => void) {
+  const [isDragging, setIsDragging] = useState(false)
+  return {
+    isDragging,
+    onDragOver: (e: React.DragEvent) => {
+      e.preventDefault()
+      setIsDragging(true)
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      e.preventDefault()
+      setIsDragging(false)
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault()
+      setIsDragging(false)
+      const files = Array.from(e.dataTransfer.files).filter((f) => f.name.toLowerCase().endsWith('.csv'))
+      if (files.length > 0) onFiles(files)
+    },
+  }
+}
+
+interface SimpleFileState {
+  id: string
+  fileName: string
+  status: RowStatus
+  rowCount: number | null
+  error?: string
+}
+
+function SimpleFileRow({ file }: { file: SimpleFileState }) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-lg border border-navy-950/8 bg-white px-3 py-2 text-xs">
+      <span className="min-w-0 flex-1 truncate font-medium text-navy-950">{file.fileName}</span>
+      {(file.status === 'parsing' || file.status === 'uploading') && (
+        <span className="flex items-center gap-1 text-navy-900/50">{file.status === 'uploading' ? 'Saving...' : 'Parsing...'}</span>
+      )}
+      {file.status === 'success' && (
+        <span className="flex items-center gap-1 text-emerald-600">
+          <CheckCircle2 size={12} /> {file.rowCount} rows
+        </span>
+      )}
+      {file.status === 'error' && (
+        <span className="flex items-center gap-1 text-brave-red" title={file.error}>
+          <AlertCircle size={12} /> {file.error}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function Upload() {
   return (
     <div className="space-y-6">
@@ -317,80 +370,96 @@ function columnSpecFor(source: UploadSource) {
 
 function UploadRow({ source }: { source: UploadSource }) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [status, setStatus] = useState<RowStatus>('idle')
-  const [rowCount, setRowCount] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [files, setFiles] = useState<SimpleFileState[]>([])
 
-  const handleFile = (file: File) => {
-    setStatus('parsing')
-    setError(null)
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: async (results) => {
-        try {
-          let rows = results.data as Record<string, any>[]
-          if (source.detectTotals && source.totalsStatKeys) {
-            rows = tagTotalRows(rows, source.totalsStatKeys)
-          }
-
-          const columnSpec = columnSpecFor(source)
-          const mappedRows = rows
-            .map((r) => {
-              const mapped = mapRow(r, columnSpec)
-              return {
-                name: mapped.name as string | undefined,
-                team: (mapped.team as string | undefined) ?? 'ATL',
-                level: (mapped.level as string | undefined) ?? source.defaultLevel ?? null,
-                isTotal: (r as any).is_total !== false, // tagTotalRows marks explicit false for a level-split row; true/undefined = total or single-level
-                stats: mapped,
-              }
-            })
-            .filter((r) => r.name && r.level)
-
-          // Same player + same resolved level can appear twice in one file
-          // (e.g. a split-level "Total" row whose comma-joined level
-          // collapses down to match one of that player's individual-level
-          // rows) — collapse to one per key before processing, preferring
-          // the total row, so a same-batch collision can't hit the
-          // database as a literal duplicate insert.
-          const dedupedByKey = new Map<string, (typeof mappedRows)[number]>()
-          for (const row of mappedRows) {
-            const key = `${row.name}|${row.team}|${row.level}`
-            const existing = dedupedByKey.get(key)
-            if (!existing || (row.isTotal && !existing.isTotal)) {
-              dedupedByKey.set(key, row)
-            }
-          }
-          const dedupedRows = Array.from(dedupedByKey.values())
-
-          setRowCount(dedupedRows.length)
-
-          if (supabaseConfigured) {
-            setStatus('uploading')
-            const upsertFn = source.supabaseTable === 'hitter_stats' ? upsertHitterStatsWithPriority : upsertPitcherStatsWithPriority
-            const { errors } = await (upsertFn as any)(
-              dedupedRows.map((r) => ({ name: r.name!, team: r.team, level: r.level!, stats: r.stats })),
-              source.statSource,
-            )
-            if (errors.length > 0) {
-              throw new Error(`${errors.length} of ${dedupedRows.length} row(s) failed to save — first error: ${errors[0]?.error?.message ?? 'unknown'}`)
-            }
-          }
-
-          cacheClear()
-          setStatus('success')
-        } catch (e: any) {
-          setError(e.message ?? 'Upload failed')
-          setStatus('error')
-        }
-      },
-      error: (err) => {
-        setError(err.message)
-        setStatus('error')
-      },
-    })
+  const updateFile = (id: string, patch: Partial<SimpleFileState>) => {
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)))
   }
+
+  const processFile = (file: File, id: string) =>
+    new Promise<void>((resolve) => {
+      updateFile(id, { status: 'parsing' })
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: async (results) => {
+          try {
+            let rows = results.data as Record<string, any>[]
+            if (source.detectTotals && source.totalsStatKeys) {
+              rows = tagTotalRows(rows, source.totalsStatKeys)
+            }
+
+            const columnSpec = columnSpecFor(source)
+            const mappedRows = rows
+              .map((r) => {
+                const mapped = mapRow(r, columnSpec)
+                return {
+                  name: mapped.name as string | undefined,
+                  team: (mapped.team as string | undefined) ?? 'ATL',
+                  level: (mapped.level as string | undefined) ?? source.defaultLevel ?? null,
+                  isTotal: (r as any).is_total !== false,
+                  stats: mapped,
+                }
+              })
+              .filter((r) => r.name && r.level)
+
+            // Same player + same resolved level can appear twice in one
+            // file (e.g. a split-level "Total" row whose comma-joined
+            // level collapses down to match one of that player's
+            // individual-level rows) — collapse to one per key before
+            // processing, preferring the total row.
+            const dedupedByKey = new Map<string, (typeof mappedRows)[number]>()
+            for (const row of mappedRows) {
+              const key = `${row.name}|${row.team}|${row.level}`
+              const existing = dedupedByKey.get(key)
+              if (!existing || (row.isTotal && !existing.isTotal)) {
+                dedupedByKey.set(key, row)
+              }
+            }
+            const dedupedRows = Array.from(dedupedByKey.values())
+
+            if (supabaseConfigured) {
+              updateFile(id, { status: 'uploading' })
+              const upsertFn = source.supabaseTable === 'hitter_stats' ? upsertHitterStatsWithPriority : upsertPitcherStatsWithPriority
+              const { errors } = await (upsertFn as any)(
+                dedupedRows.map((r) => ({ name: r.name!, team: r.team, level: r.level!, stats: r.stats })),
+                source.statSource,
+              )
+              if (errors.length > 0) {
+                throw new Error(`${errors.length} of ${dedupedRows.length} row(s) failed to save — first error: ${errors[0]?.error?.message ?? 'unknown'}`)
+              }
+            }
+
+            cacheClear()
+            updateFile(id, { status: 'success', rowCount: dedupedRows.length })
+          } catch (e: any) {
+            updateFile(id, { status: 'error', error: e.message ?? 'Upload failed' })
+          } finally {
+            resolve()
+          }
+        },
+        error: (err) => {
+          updateFile(id, { status: 'error', error: err.message })
+          resolve()
+        },
+      })
+    })
+
+  const handleFiles = async (fileList: File[]) => {
+    const incoming = fileList.map((file) => ({
+      id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file,
+    }))
+    setFiles((prev) => [
+      ...prev,
+      ...incoming.map(({ id, file }) => ({ id, fileName: file.name, status: 'parsing' as RowStatus, rowCount: null })),
+    ])
+    for (const { id, file } of incoming) {
+      await processFile(file, id)
+    }
+  }
+
+  const { isDragging, ...dropHandlers } = useFileDrop(handleFiles)
 
   return (
     <div className="card flex flex-col gap-2.5 p-3.5">
@@ -407,28 +476,25 @@ function UploadRow({ source }: { source: UploadSource }) {
         ref={inputRef}
         type="file"
         accept=".csv"
+        multiple
         className="hidden"
-        onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+        onChange={(e) => e.target.files && e.target.files.length > 0 && handleFiles(Array.from(e.target.files))}
       />
       <button
         onClick={() => inputRef.current?.click()}
-        className="flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-navy-950/15 py-2.5 text-xs font-medium text-navy-900/60 hover:border-navy-600 hover:text-navy-900"
+        {...dropHandlers}
+        className={`flex items-center justify-center gap-2 rounded-lg border-2 border-dashed py-2.5 text-xs font-medium transition ${
+          isDragging ? 'border-brave-red bg-brave-red/5 text-brave-red' : 'border-navy-950/15 text-navy-900/60 hover:border-navy-600 hover:text-navy-900'
+        }`}
       >
-        <UploadCloud size={14} /> Upload CSV
+        <UploadCloud size={14} /> {isDragging ? 'Drop CSVs here' : 'Upload or drag CSVs (any number)'}
       </button>
-      {(status === 'parsing' || status === 'uploading') && (
-        <p className="text-[11px] text-navy-900/50">{status === 'uploading' ? 'Saving...' : 'Parsing...'}</p>
-      )}
-      {status === 'success' && (
-        <p className="flex items-center gap-1 text-[11px] text-emerald-600">
-          <CheckCircle2 size={12} /> Loaded {rowCount} rows
-          {!supabaseConfigured && ' (local preview only)'}
-        </p>
-      )}
-      {status === 'error' && (
-        <p className="flex items-center gap-1 text-[11px] text-brave-red">
-          <AlertCircle size={12} /> {error}
-        </p>
+      {files.length > 0 && (
+        <div className="space-y-1.5">
+          {files.map((f) => (
+            <SimpleFileRow key={f.id} file={f} />
+          ))}
+        </div>
       )}
     </div>
   )
@@ -467,64 +533,81 @@ function PitchCharacteristicsSection() {
 
 function PitchCharacteristicsRow({ level }: { level: string }) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [status, setStatus] = useState<RowStatus>('idle')
-  const [rowCount, setRowCount] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [files, setFiles] = useState<SimpleFileState[]>([])
 
-  const handleFile = (file: File) => {
-    setStatus('parsing')
-    setError(null)
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: async (results) => {
-        try {
-          const rows = results.data as Record<string, any>[]
-          const mappedRows = rows
-            .map((r) => {
-              const mapped = mapRow(r, PITCH_CHARACTERISTICS_COLUMNS)
-              return {
-                name: mapped.name as string | undefined,
-                team: (mapped.team as string | undefined) ?? null,
-                level,
-                season: CURRENT_SEASON,
-                pitchType: mapped.pitch_type as string | undefined,
-                pitcherHand: (mapped.pitcher_hand as string | undefined) ?? null,
-                pitches: (mapped.pitches as number | undefined) ?? null,
-                velo: (mapped.velo as number | undefined) ?? null,
-                veloMax: (mapped.velo_max as number | undefined) ?? null,
-                spinRate: (mapped.spin_rate as number | undefined) ?? null,
-                ivb: (mapped.ivb as number | undefined) ?? null,
-                hb: (mapped.hb as number | undefined) ?? null,
-                extension: (mapped.extension as number | undefined) ?? null,
-                releaseHeight: (mapped.release_height as number | undefined) ?? null,
-                releaseSide: (mapped.release_side as number | undefined) ?? null,
-                tjstuffPlus: (mapped.tjstuff_plus as number | undefined) ?? null,
-              }
-            })
-            .filter((r) => r.name && r.pitchType)
-
-          setRowCount(mappedRows.length)
-
-          if (supabaseConfigured && mappedRows.length > 0) {
-            setStatus('uploading')
-            const { error: upsertError } = await upsertPitchCharacteristics(mappedRows as any)
-            if (upsertError) throw upsertError
-          }
-
-          cacheClear()
-          setStatus('success')
-        } catch (e: any) {
-          setError(e.message ?? 'Upload failed')
-          setStatus('error')
-        }
-      },
-      error: (err) => {
-        setError(err.message)
-        setStatus('error')
-      },
-    })
+  const updateFile = (id: string, patch: Partial<SimpleFileState>) => {
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)))
   }
+
+  const processFile = (file: File, id: string) =>
+    new Promise<void>((resolve) => {
+      updateFile(id, { status: 'parsing' })
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: async (results) => {
+          try {
+            const rows = results.data as Record<string, any>[]
+            const mappedRows = rows
+              .map((r) => {
+                const mapped = mapRow(r, PITCH_CHARACTERISTICS_COLUMNS)
+                return {
+                  name: mapped.name as string | undefined,
+                  team: (mapped.team as string | undefined) ?? null,
+                  level,
+                  season: CURRENT_SEASON,
+                  pitchType: mapped.pitch_type as string | undefined,
+                  pitcherHand: (mapped.pitcher_hand as string | undefined) ?? null,
+                  pitches: (mapped.pitches as number | undefined) ?? null,
+                  velo: (mapped.velo as number | undefined) ?? null,
+                  veloMax: (mapped.velo_max as number | undefined) ?? null,
+                  spinRate: (mapped.spin_rate as number | undefined) ?? null,
+                  ivb: (mapped.ivb as number | undefined) ?? null,
+                  hb: (mapped.hb as number | undefined) ?? null,
+                  extension: (mapped.extension as number | undefined) ?? null,
+                  releaseHeight: (mapped.release_height as number | undefined) ?? null,
+                  releaseSide: (mapped.release_side as number | undefined) ?? null,
+                  tjstuffPlus: (mapped.tjstuff_plus as number | undefined) ?? null,
+                }
+              })
+              .filter((r) => r.name && r.pitchType)
+
+            if (supabaseConfigured && mappedRows.length > 0) {
+              updateFile(id, { status: 'uploading' })
+              const { error: upsertError } = await upsertPitchCharacteristics(mappedRows as any)
+              if (upsertError) throw upsertError
+            }
+
+            cacheClear()
+            updateFile(id, { status: 'success', rowCount: mappedRows.length })
+          } catch (e: any) {
+            updateFile(id, { status: 'error', error: e.message ?? 'Upload failed' })
+          } finally {
+            resolve()
+          }
+        },
+        error: (err) => {
+          updateFile(id, { status: 'error', error: err.message })
+          resolve()
+        },
+      })
+    })
+
+  const handleFiles = async (fileList: File[]) => {
+    const incoming = fileList.map((file) => ({
+      id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file,
+    }))
+    setFiles((prev) => [
+      ...prev,
+      ...incoming.map(({ id, file }) => ({ id, fileName: file.name, status: 'parsing' as RowStatus, rowCount: null })),
+    ])
+    for (const { id, file } of incoming) {
+      await processFile(file, id)
+    }
+  }
+
+  const { isDragging, ...dropHandlers } = useFileDrop(handleFiles)
 
   return (
     <div className="card flex flex-col gap-2.5 p-3.5">
@@ -533,28 +616,25 @@ function PitchCharacteristicsRow({ level }: { level: string }) {
         ref={inputRef}
         type="file"
         accept=".csv"
+        multiple
         className="hidden"
-        onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+        onChange={(e) => e.target.files && e.target.files.length > 0 && handleFiles(Array.from(e.target.files))}
       />
       <button
         onClick={() => inputRef.current?.click()}
-        className="flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-navy-950/15 py-2.5 text-xs font-medium text-navy-900/60 hover:border-navy-600 hover:text-navy-900"
+        {...dropHandlers}
+        className={`flex items-center justify-center gap-2 rounded-lg border-2 border-dashed py-2.5 text-xs font-medium transition ${
+          isDragging ? 'border-brave-red bg-brave-red/5 text-brave-red' : 'border-navy-950/15 text-navy-900/60 hover:border-navy-600 hover:text-navy-900'
+        }`}
       >
-        <UploadCloud size={14} /> Upload CSV
+        <UploadCloud size={14} /> {isDragging ? 'Drop CSVs here' : 'Upload or drag CSVs (any number)'}
       </button>
-      {(status === 'parsing' || status === 'uploading') && (
-        <p className="text-[11px] text-navy-900/50">{status === 'uploading' ? 'Saving...' : 'Parsing...'}</p>
-      )}
-      {status === 'success' && (
-        <p className="flex items-center gap-1 text-[11px] text-emerald-600">
-          <CheckCircle2 size={12} /> Loaded {rowCount} rows
-          {!supabaseConfigured && ' (local preview only)'}
-        </p>
-      )}
-      {status === 'error' && (
-        <p className="flex items-center gap-1 text-[11px] text-brave-red">
-          <AlertCircle size={12} /> {error}
-        </p>
+      {files.length > 0 && (
+        <div className="space-y-1.5">
+          {files.map((f) => (
+            <SimpleFileRow key={f.id} file={f} />
+          ))}
+        </div>
       )}
     </div>
   )
@@ -686,8 +766,8 @@ function CompPoolUploadSection() {
       })
     })
 
-  const handleFiles = async (fileList: FileList) => {
-    const incoming = Array.from(fileList).map((file) => ({
+  const handleFiles = async (fileList: File[]) => {
+    const incoming = fileList.map((file) => ({
       id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       file,
     }))
@@ -707,6 +787,8 @@ function CompPoolUploadSection() {
       await processFile(file, id)
     }
   }
+
+  const { isDragging, ...dropHandlers } = useFileDrop(handleFiles)
 
   return (
     <div className="card border-l-4 border-brave-gold p-3.5 sm:p-4">
@@ -730,13 +812,16 @@ function CompPoolUploadSection() {
         accept=".csv"
         multiple
         className="hidden"
-        onChange={(e) => e.target.files && e.target.files.length > 0 && handleFiles(e.target.files)}
+        onChange={(e) => e.target.files && e.target.files.length > 0 && handleFiles(Array.from(e.target.files))}
       />
       <button
         onClick={() => inputRef.current?.click()}
-        className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-navy-950/15 py-3 text-xs font-medium text-navy-900/60 hover:border-brave-gold hover:text-navy-900"
+        {...dropHandlers}
+        className={`flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed py-3 text-xs font-medium transition ${
+          isDragging ? 'border-brave-red bg-brave-red/5 text-brave-red' : 'border-navy-950/15 text-navy-900/60 hover:border-brave-gold hover:text-navy-900'
+        }`}
       >
-        <UploadCloud size={16} /> Select comp pool CSVs (any number at once)
+        <UploadCloud size={16} /> {isDragging ? 'Drop CSVs here' : 'Select or drag comp pool CSVs (any number at once)'}
       </button>
       {files.length > 0 && (
         <div className="mt-3 space-y-1.5">
