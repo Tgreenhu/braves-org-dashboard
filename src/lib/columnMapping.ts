@@ -14,6 +14,20 @@ function parseInteger(raw: any): number | null {
   const n = parseNumber(raw)
   return n === null ? null : Math.round(n)
 }
+
+// TJStats stores its "_percent" columns as a 0-1 fraction (e.g. 0.1452 for
+// 14.52%), unlike FanGraphs which gives an already-scaled string like
+// "14.5%" — parseNumber alone would store TJStats percentages 100x too
+// small. Confirmed against a real TJStats export (see the conversation
+// this was fixed in) — bb_percent/k_percent were 0.1452/0.2124 for a
+// real player, not 14.52/21.24, while things named "_percent" that are
+// actually rate stats on a normal scale (woba_percent, xwoba_percent —
+// TJStats' naming is inconsistent here, those are NOT percentages despite
+// the column name) use plain parseNumber instead, same as avg/obp/slg.
+function parsePercentFraction(raw: any): number | null {
+  const n = parseNumber(raw)
+  return n === null ? null : n * 100
+}
 function parseString(raw: any): string | null {
   if (raw === undefined || raw === null) return null
   const s = String(raw).trim()
@@ -131,32 +145,61 @@ export const PROSPECTSAVANT_PITCHER_COLUMNS: ColumnSpec[] = [
 ]
 
 export const TJSTATS_HITTER_COLUMNS: ColumnSpec[] = [
-  { target: 'name', candidates: ['Name', 'Player', 'Batter'], parse: parseString },
-  { target: 'team', candidates: ['Team'], parse: parseString },
-  { target: 'level', candidates: ['Level'], parse: parseLevel },
-  { target: 'age', candidates: ['Age'], parse: parseInteger },
-  { target: 'z_contact_pct', candidates: ['Z-Contact%', 'ZContact%'], parse: parseNumber },
-  { target: 'chase_pct', candidates: ['Chase%', 'O-Swing%'], parse: parseNumber },
-  { target: 'ev_avg', candidates: ['EV', 'Exit Velo'], parse: parseNumber },
-  { target: 'ev_max', candidates: ['Max EV'], parse: parseNumber },
-  { target: 'la_avg', candidates: ['LA', 'Launch Angle'], parse: parseNumber },
-  { target: 'barrel_pct', candidates: ['Barrel%'], parse: parseNumber },
-  { target: 'hardhit_pct', candidates: ['HardHit%'], parse: parseNumber },
-  { target: 'bat_speed', candidates: ['Bat Speed'], parse: parseNumber },
-  { target: 'xba', candidates: ['xBA'], parse: parseNumber },
-  { target: 'xslg', candidates: ['xSLG'], parse: parseNumber },
-  { target: 'xwoba', candidates: ['xwOBA'], parse: parseNumber },
+  // Confirmed against a real TJStats export (tjstats_batter_overview_2026.csv):
+  // player_id, player_name, player_team, pa, home_run, bb_percent, k_percent,
+  // iso, avg, obp, slg, woba_percent, xwoba_percent — no Level or Age column
+  // on this particular tab, so 'level' falls back to the upload source's
+  // configured level (see Upload.tsx) and age just won't populate from here.
+  { target: 'name', candidates: ['player_name', 'Name', 'Player', 'Batter'], parse: parseString },
+  { target: 'team', candidates: ['player_team', 'Team'], parse: parseString },
+  { target: 'level', candidates: ['level', 'Level'], parse: parseLevel },
+  { target: 'age', candidates: ['age', 'Age'], parse: parseInteger },
+  { target: 'avg', candidates: ['avg', 'AVG'], parse: parseNumber },
+  { target: 'obp', candidates: ['obp', 'OBP'], parse: parseNumber },
+  { target: 'slg', candidates: ['slg', 'SLG'], parse: parseNumber },
+  { target: 'woba', candidates: ['woba_percent', 'woba', 'wOBA'], parse: parseNumber }, // NOT a percent despite the "_percent" name — already on the normal wOBA scale
+  { target: 'xwoba', candidates: ['xwoba_percent', 'xwoba', 'xwOBA'], parse: parseNumber }, // same as above
+  { target: 'bb_pct', candidates: ['bb_percent', 'BB%'], parse: parsePercentFraction },
+  { target: 'k_pct', candidates: ['k_percent', 'K%'], parse: parsePercentFraction },
+  // Everything below this line is an UNCONFIRMED guess — likely lives on
+  // one of the other tabs (tab=1/2/3), not the Overview tab checked so
+  // far, but using the now-confirmed snake_case + player_ prefix + 0-1
+  // fraction convention. Send the other tabs' files to lock these down.
+  { target: 'z_contact_pct', candidates: ['z_contact_percent', 'zcontact_percent', 'Z-Contact%'], parse: parsePercentFraction },
+  { target: 'chase_pct', candidates: ['chase_percent', 'o_swing_percent', 'Chase%'], parse: parsePercentFraction },
+  { target: 'whiff_pct', candidates: ['whiff_percent', 'Whiff%'], parse: parsePercentFraction },
+  { target: 'swing_pct', candidates: ['swing_percent', 'Swing%'], parse: parsePercentFraction },
+  { target: 'z_swing_pct', candidates: ['z_swing_percent', 'Z-Swing%'], parse: parsePercentFraction },
+  { target: 'pull_pct', candidates: ['pull_percent', 'Pull%'], parse: parsePercentFraction },
+  { target: 'pull_air_pct', candidates: ['pull_air_percent', 'Pull Air%'], parse: parsePercentFraction },
+  { target: 'gb_pct', candidates: ['gb_percent', 'GB%'], parse: parsePercentFraction },
+  { target: 'ev_avg', candidates: ['ev', 'exit_velo', 'EV'], parse: parseNumber },
+  { target: 'ev_max', candidates: ['max_ev', 'Max EV'], parse: parseNumber },
+  { target: 'la_avg', candidates: ['la', 'launch_angle', 'LA'], parse: parseNumber },
+  { target: 'barrel_pct', candidates: ['barrel_percent', 'Barrel%'], parse: parsePercentFraction },
+  { target: 'hardhit_pct', candidates: ['hardhit_percent', 'hard_hit_percent', 'HardHit%'], parse: parsePercentFraction },
+  { target: 'bat_speed', candidates: ['bat_speed', 'Bat Speed'], parse: parseNumber },
+  { target: 'xba', candidates: ['xba', 'xBA'], parse: parseNumber },
+  { target: 'xslg', candidates: ['xslg', 'xSLG'], parse: parseNumber },
 ]
 
 export const TJSTATS_PITCHER_COLUMNS: ColumnSpec[] = [
-  { target: 'name', candidates: ['Name', 'Player', 'Pitcher'], parse: parseString },
-  { target: 'team', candidates: ['Team'], parse: parseString },
-  { target: 'level', candidates: ['Level'], parse: parseLevel },
-  { target: 'age', candidates: ['Age'], parse: parseInteger },
-  { target: 'z_contact_pct', candidates: ['Z-Contact%', 'ZContact%'], parse: parseNumber },
-  { target: 'fb_velo', candidates: ['FB Velo', 'Velo', 'FF Velo'], parse: parseNumber },
-  { target: 'sweet_spot_pct', candidates: ['SwSP%', 'Sweet Spot%'], parse: parseNumber },
-  { target: 'xba', candidates: ['xBA'], parse: parseNumber },
-  { target: 'xslg', candidates: ['xSLG'], parse: parseNumber },
-  { target: 'xwoba', candidates: ['xwOBA'], parse: parseNumber },
+  // Same confirmed convention as the hitter file (player_name/player_team,
+  // snake_case, 0-1 fraction percents) — not yet confirmed against a real
+  // TJStats pitcher export specifically, so treat these as a strong guess
+  // rather than verified. Send a real pitcher file to lock these down too.
+  { target: 'name', candidates: ['player_name', 'Name', 'Player', 'Pitcher'], parse: parseString },
+  { target: 'team', candidates: ['player_team', 'Team'], parse: parseString },
+  { target: 'level', candidates: ['level', 'Level'], parse: parseLevel },
+  { target: 'age', candidates: ['age', 'Age'], parse: parseInteger },
+  { target: 'avg', candidates: ['avg', 'AVG'], parse: parseNumber },
+  { target: 'slg', candidates: ['slg', 'SLG'], parse: parseNumber },
+  { target: 'obp', candidates: ['obp', 'OBP'], parse: parseNumber },
+  { target: 'woba', candidates: ['woba_percent', 'woba', 'wOBA'], parse: parseNumber },
+  { target: 'xwoba', candidates: ['xwoba_percent', 'xwoba', 'xwOBA'], parse: parseNumber },
+  { target: 'z_contact_pct', candidates: ['z_contact_percent', 'Z-Contact%'], parse: parsePercentFraction },
+  { target: 'fb_velo', candidates: ['fb_velo', 'fastball_velo', 'FB Velo'], parse: parseNumber },
+  { target: 'sweet_spot_pct', candidates: ['sweet_spot_percent', 'swsp_percent', 'SwSP%'], parse: parsePercentFraction },
+  { target: 'xba', candidates: ['xba', 'xBA'], parse: parseNumber },
+  { target: 'xslg', candidates: ['xslg', 'xSLG'], parse: parseNumber },
 ]
