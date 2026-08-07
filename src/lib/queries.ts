@@ -1,7 +1,7 @@
 import { supabase, supabaseConfigured } from '@/lib/supabaseClient'
 import { cachedFetch } from '@/lib/cache'
 import { CURRENT_SEASON } from '@/lib/constants'
-import type { HitterSeasonStats, PitcherSeasonStats, TeamLevelRecord, OrgLevel, Top30Entry, Top30Snapshot } from '@/types'
+import type { HitterSeasonStats, PitcherSeasonStats, TeamLevelRecord, OrgLevel, Top30Entry, Top30Snapshot, TradingCard, CardStatus } from '@/types'
 import { ORG_LEVELS } from '@/types'
 import { mergeWithPriority, computeExpectedDiffs, HITTER_STAT_PRIORITY, PITCHER_STAT_PRIORITY, type StatSource } from '@/lib/priorityMerge'
 
@@ -1014,4 +1014,126 @@ export async function fetchProspectCompPool(): Promise<{
       })),
     }
   })
+}
+
+// =====================================================================
+// Tab 9: Cards — trading card collection + P&L
+// =====================================================================
+
+function mapCardRow(row: Record<string, any>): TradingCard {
+  return {
+    id: row.id,
+    playerName: row.player_name,
+    year: row.year,
+    setName: row.set_name,
+    cardNumber: row.card_number,
+    parallel: row.parallel,
+    sport: row.sport,
+    gradingCompany: row.grading_company,
+    grade: row.grade != null ? Number(row.grade) : null,
+    imageUrl: row.image_url,
+    notes: row.notes,
+    purchaseDate: row.purchase_date,
+    purchasePrice: Number(row.purchase_price),
+    purchasePlatform: row.purchase_platform,
+    purchaseUrl: row.purchase_url,
+    purchaseItemId: row.purchase_item_id,
+    purchaseFees: Number(row.purchase_fees ?? 0),
+    status: row.status as CardStatus,
+    saleDate: row.sale_date,
+    salePrice: row.sale_price != null ? Number(row.sale_price) : null,
+    salePlatform: row.sale_platform,
+    saleUrl: row.sale_url,
+    saleItemId: row.sale_item_id,
+    saleFees: Number(row.sale_fees ?? 0),
+    shippingCost: Number(row.shipping_cost ?? 0),
+    estimatedCurrentValue: row.estimated_current_value != null ? Number(row.estimated_current_value) : null,
+  }
+}
+
+export async function fetchTradingCards(): Promise<TradingCard[]> {
+  if (!supabaseConfigured) return []
+  const { data, error } = await supabase.from('trading_cards').select('*').order('purchase_date', { ascending: false })
+  if (error || !data) return []
+  return data.map(mapCardRow)
+}
+
+export interface NewCardInput {
+  playerName: string
+  year: number | null
+  setName: string | null
+  cardNumber: string | null
+  parallel: string | null
+  sport: string
+  gradingCompany: string | null
+  grade: number | null
+  imageUrl: string | null
+  notes: string | null
+  purchaseDate: string
+  purchasePrice: number
+  purchasePlatform: string
+  purchaseUrl: string | null
+  purchaseItemId: string | null
+  purchaseFees: number
+}
+
+export async function addTradingCard(card: NewCardInput) {
+  return supabase.from('trading_cards').insert({
+    player_name: card.playerName,
+    year: card.year,
+    set_name: card.setName,
+    card_number: card.cardNumber,
+    parallel: card.parallel,
+    sport: card.sport,
+    grading_company: card.gradingCompany,
+    grade: card.grade,
+    image_url: card.imageUrl,
+    notes: card.notes,
+    purchase_date: card.purchaseDate,
+    purchase_price: card.purchasePrice,
+    purchase_platform: card.purchasePlatform,
+    purchase_url: card.purchaseUrl,
+    purchase_item_id: card.purchaseItemId,
+    purchase_fees: card.purchaseFees,
+    status: 'owned',
+  })
+}
+
+export interface SaleInput {
+  saleDate: string
+  salePrice: number
+  salePlatform: string
+  saleUrl: string | null
+  saleItemId: string | null
+  saleFees: number
+  shippingCost: number
+}
+
+export async function markCardSold(id: string, sale: SaleInput) {
+  return supabase
+    .from('trading_cards')
+    .update({
+      status: 'sold',
+      sale_date: sale.saleDate,
+      sale_price: sale.salePrice,
+      sale_platform: sale.salePlatform,
+      sale_url: sale.saleUrl,
+      sale_item_id: sale.saleItemId,
+      sale_fees: sale.saleFees,
+      shipping_cost: sale.shippingCost,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+}
+
+export async function updateCardStatus(id: string, status: CardStatus) {
+  return supabase.from('trading_cards').update({ status, updated_at: new Date().toISOString() }).eq('id', id)
+}
+
+export async function updateCardEstimatedValue(id: string, estimatedCurrentValue: number | null) {
+  return supabase.from('trading_cards').update({ estimated_current_value: estimatedCurrentValue, updated_at: new Date().toISOString() }).eq('id', id)
+}
+
+export async function deleteTradingCard(id: string) {
+  return supabase.from('trading_cards').delete().eq('id', id)
 }
