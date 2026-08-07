@@ -289,3 +289,42 @@ export interface ProspectCompResult {
   metrics: { metric: string; player: number; comp: number }[] // radar chart data
   blurb: string
 }
+
+// =====================================================================
+// Tab 9: Cards — trading card collection + P&L
+// =====================================================================
+
+export type CardStatus = 'owned' | 'listed' | 'sold'
+
+export interface TradingCard {
+  id: string
+  playerName: string
+  year: number | null
+  setName: string | null
+  cardNumber: string | null
+  parallel: string | null
+  sport: string
+  gradingCompany: string | null
+  grade: number | null
+  imageUrl: string | null
+  notes: string | null
+
+  purchaseDate: string // ISO date
+  purchasePrice: number
+  purchasePlatform: string
+  purchaseUrl: string | null
+  purchaseItemId: string | null
+  purchaseFees: number
+
+  status: CardStatus
+
+  saleDate: string | null
+  salePrice: number | null
+  salePlatform: string | null
+  saleUrl: string | null
+  saleItemId: string | null
+  saleFees: number
+  shippingCost: number
+
+  estimatedCurrentValue: number | null
+}
